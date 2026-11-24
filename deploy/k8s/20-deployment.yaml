@@ -38,7 +38,7 @@ spec:
           env:
             # The folder on your WebDAV server that holds the archive (README.md, step 2).
             - name: NEKORISU_WEBDAV_URL
-              value: https://webdav.example.com/dav/nekorisu
+              value: https://webdav.example.com/dav
             - name: NEKORISU_WEBDAV_USER
               value: nekorisu
             - name: NEKORISU_WEBDAV_PASSWORD

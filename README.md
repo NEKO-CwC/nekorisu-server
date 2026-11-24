@@ -17,7 +17,8 @@
 docker build --build-context nekorisu=../nekorisu -t nekorisu-server .
 ```
 
-然后照 [`docker-compose.example.yml`](docker-compose.example.yml) 配环境变量（全部用环境变量设置，见该文件和 `deploy/k8s/README.md`），
+然后照 [`docker-compose.example.yml`](docker-compose.example.yml) 配环境变量（全部用环境变量设置，见该文件和 `deploy/k8s/README.md`）。
+`NEKORISU_WEBDAV_URL` 和客户端填同一个存储地址：归档在它下面的 `nekorisu/v1/`，所以填 `nekorisu/` 的上一层。
 下发的配置放在 `/config`，样例在 [`config-example/`](config-example/)。
 第一次启动，日志里会打印一个设置码；打开 panel，用它设置管理员密码。
 
