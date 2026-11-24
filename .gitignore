@@ -1,0 +1,10 @@
+/target
+node_modules
+*.key
+.env
+/dev-data
+*.db
+*.db-shm
+*.db-wal
+secrets/
+/deploy/*.local/

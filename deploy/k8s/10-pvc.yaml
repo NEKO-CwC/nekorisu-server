@@ -1,0 +1,13 @@
+# The database and the config signing key. Back this up: without the key every
+# device has to be pointed at the server again.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nekorisu-data
+  namespace: nekorisu
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,7 @@
+target
+dev-data
+.git
+**/node_modules
+web/dist
+*.key
+.env

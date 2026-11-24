@@ -1,0 +1,72 @@
+# Example of what the server hands to devices.
+# Copy this directory to the server's config directory (NEKORISU_CONFIG_DIR,
+# /config in the container) and edit it. When this file or anything in
+# resources/ changes, the server checks it, signs it and publishes a new
+# numbered revision within 30 seconds. A file with a mistake is not published;
+# the last good one stays in force, and the panel's config page says why.
+#
+# These values are examples, not recommended defaults: set the rules
+# for what devices should do to suit your own setup.
+
+# Devices older than this tell their user to update. Leave out for no minimum.
+min_client_version = "0.1.0"
+
+# What this server supports. Leave empty; there is no push in this version.
+features = []
+
+# Seconds between config checks. 0 = the client default (1 hour). 60 to 604800.
+poll_interval_secs = 3600
+
+[update]
+# "stable" or "beta", and where to fetch <channel>.json from before the
+# addresses the device already knows.
+channel = "stable"
+urls = []
+
+[local]
+# The default form of a device's own copy of a session: "pruned" or "full".
+# The storage always holds the full original, whatever this says.
+copy_form = "pruned"
+
+# The default excerpt recipe: data, so every device accepts it. The file is
+# fetched by its SHA-256, which the server fills in.
+[digest.excerpt]
+name = "excerpt-default"
+version = "2026-11-23.1"
+file = "resources/excerpt-default.json"
+
+# A summary recipe or script goes here the same way. executable = true marks a
+# script: a device runs it only if its owner turned on "accept everything" on
+# that device, and the panel shows it with a warning.
+#
+# [digest.summary]
+# name = "summary"
+# version = "1"
+# file = "resources/summary.json"
+# executable = false
+
+# The table that tells which lines are the user's words, replies, thinking and
+# tool calls.
+#
+# [kind_rules]
+# name = "kinds"
+# version = "1"
+# file = "resources/kind-rules.json"
+
+# Ask devices to change values they have locked. Nothing happens on a device
+# until its user runs `nekorisu source accept <id>` there.
+#
+# [[force]]
+# id = "force-copy-form-1"
+# devices = []                 # empty = every device
+# [[force.changes]]
+# key = "local.copy_form"      # a dotted path into this file; some keys cannot be forced
+# value = "full"
+#
+# Ask devices to allow (allow) or switch off (revoke) running scripts. The
+# server cannot switch it on itself: "allow" is only a request.
+#
+# [[requests]]
+# id = "exec-1"
+# action = "allow"             # or "revoke", which takes effect at once
+# devices = []

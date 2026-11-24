@@ -1,0 +1,30 @@
+# ingress-nginx, and cert-manager issues the certificate. Change the host and the
+# ClusterIssuer to yours (README.md, step 0).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nekorisu-server
+  namespace: nekorisu
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Exports are streamed; do not buffer them.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - nekorisu.example.com
+      secretName: nekorisu-tls
+  rules:
+    - host: nekorisu.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nekorisu-server
+                port:
+                  number: 8080

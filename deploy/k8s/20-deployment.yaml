@@ -1,0 +1,78 @@
+# One replica: the database is SQLite on a ReadWriteOnce volume.
+# Secrets come from the Secret nekorisu-secrets (see README.md); nothing secret is in this file.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nekorisu-server
+  namespace: nekorisu
+  labels:
+    app.kubernetes.io/name: nekorisu-server
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nekorisu-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nekorisu-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nekorisu-server
+          # Built on the host and imported into k3s (see README.md), like the other local images.
+          image: local/nekorisu-server:0.1.0-20261123
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 7070
+          env:
+            # The folder on your WebDAV server that holds the archive (README.md, step 2).
+            - name: NEKORISU_WEBDAV_URL
+              value: https://webdav.example.com/dav/nekorisu
+            - name: NEKORISU_WEBDAV_USER
+              value: nekorisu
+            - name: NEKORISU_WEBDAV_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: nekorisu-secrets, key: webdav-password }
+            - name: NEKORISU_DEVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: nekorisu-secrets, key: device-token }
+            - name: NEKORISU_MCP_TOKEN
+              valueFrom:
+                secretKeyRef: { name: nekorisu-secrets, key: mcp-token }
+            - name: NEKORISU_PUBLIC_URL
+              value: https://nekorisu.example.com
+            - name: NEKORISU_COOKIE_SECURE
+              value: "true"
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: nekorisu-data
