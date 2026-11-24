@@ -14,6 +14,7 @@ import type {
   DeviceList,
   ExportFields,
   LoginRequest,
+  OauthApps,
   Overview,
   RefreshResult,
   SessionDetail,
@@ -186,6 +187,24 @@ export function useActivity(limit: number) {
     queryFn: ({ signal }) => apiGet<ActivityList>("/api/activity", { limit }, signal),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+  });
+}
+
+export function useOauthApps() {
+  return useQuery({
+    queryKey: ["oauth-apps"],
+    queryFn: ({ signal }) => apiGet<OauthApps>("/api/oauth/apps", {}, signal),
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useRevokeOauthApp() {
+  return useMutation({
+    mutationFn: (id: string) => apiPost<void>(`/api/oauth/apps/${encodeURIComponent(id)}/revoke`),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["oauth-apps"] });
+    },
   });
 }
 

@@ -4,6 +4,7 @@ use nekorisu_archive::Archive;
 use nekorisu_cloud::{Signer, SourceStatus, Store};
 
 use crate::auth::Auth;
+use crate::oauth::Oauth;
 use crate::settings::Settings;
 
 pub struct AppState {
@@ -11,6 +12,7 @@ pub struct AppState {
     pub archive: Arc<Archive>,
     pub store: Store,
     pub auth: Auth,
+    pub oauth: Oauth,
     pub signer: Arc<dyn Signer>,
     pub source: Arc<RwLock<SourceStatus>>,
 }

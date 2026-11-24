@@ -1,9 +1,13 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use nekorisu_archive::Archive;
 use nekorisu_cloud::{CloudService, FileSigner, Publisher, ServiceOptions, Signer, Store, Tls, serve as serve_grpc};
 use nekorisu_server::auth::Auth;
+use nekorisu_server::oauth::Oauth;
+use nekorisu_server::oauth::client::HttpFetcher;
+use nekorisu_server::oauth::dns::DohResolver;
 use nekorisu_server::settings::Settings;
 use nekorisu_server::state::AppState;
 use nekorisu_server::{api, db, router, storage};
@@ -76,7 +80,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::connect(&settings.database_url).await?;
     let store = Store::new(pool.clone());
     store.migrate().await?;
-    let auth = Auth::new(pool).await?;
+    let auth = Auth::new(pool.clone()).await?;
+    let fetcher = HttpFetcher {
+        dns_over_https: settings.dns_over_https.clone().map(DohResolver::new),
+        ..HttpFetcher::default()
+    };
+    let oauth = Oauth::new(pool, &settings, Arc::new(fetcher)).await?;
 
     let (signer, created) = FileSigner::load_or_create(&settings.signing_key_file)?;
     let signer: Arc<dyn Signer> = Arc::new(signer);
@@ -108,8 +117,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if settings.device_token.is_none() {
         tracing::warn!("NEKORISU_DEVICE_TOKEN is not set: devices cannot fetch the account config or report");
     }
-    if settings.mcp_token.is_none() {
-        tracing::info!("NEKORISU_MCP_TOKEN is not set: the MCP endpoint is off");
+    match oauth.endpoints() {
+        Some(ep) => tracing::info!(
+            mcp = %ep.resource,
+            client_metadata_documents = settings.oauth_metadata_documents,
+            dns_over_https = settings.dns_over_https.is_some(),
+            "the MCP endpoint is on; agents sign in with OAuth (claude mcp login / codex mcp login)"
+        ),
+        None => tracing::warn!(
+            "NEKORISU_PUBLIC_URL is not set: the MCP endpoint is OFF (its OAuth sign-in needs the public address)"
+        ),
     }
 
     let state = Arc::new(AppState {
@@ -117,6 +134,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         archive,
         store: store.clone(),
         auth,
+        oauth,
         signer,
         source,
     });
@@ -131,8 +149,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let http = tokio::net::TcpListener::bind(settings.http_addr).await?;
-    tracing::info!(addr = %settings.http_addr, "panel and MCP");
-    let http_server = axum::serve(http, router(state)).with_graceful_shutdown(stopped(stop_rx.clone()));
+    tracing::info!(
+        addr = %settings.http_addr,
+        trusted_proxy_ranges = settings.trusted_proxies.len(),
+        "panel and MCP"
+    );
+    // The peer address is what rate limits count by (or, from a trusted
+    // proxy, its forwarding headers: crate::client_ip).
+    let http_server = axum::serve(http, router(state).into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(stopped(stop_rx.clone()));
 
     let tls = match &settings.grpc_tls {
         Some((cert, key)) => Some(Tls {

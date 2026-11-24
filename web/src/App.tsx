@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router";
 import { AuthGate } from "./components/AuthGate";
 import { Layout } from "./components/Layout";
 import { ActivityPage } from "./pages/ActivityPage";
+import { AppsPage } from "./pages/AppsPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { DevicesPage } from "./pages/DevicesPage";
 import { ExportPage } from "./pages/ExportPage";
@@ -27,6 +28,7 @@ export function App() {
           <Route path="config" element={<ConfigPage />} />
           <Route path="storage" element={<StoragePage />} />
           <Route path="activity" element={<ActivityPage />} />
+          <Route path="apps" element={<AppsPage />} />
           <Route path="export" element={<ExportPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

@@ -19,7 +19,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::auth::{AuthError, clear_cookie, session_cookie, token_from_cookies};
+use crate::client_ip::ClientIp;
 use crate::error::{ApiError, ApiResult};
+use crate::limit::RateKey;
 use crate::state::Shared;
 use crate::util::{cut, today_utc};
 
@@ -104,16 +106,19 @@ pub async fn security_headers(req: Request, next: Next) -> Response {
     let path = req.uri().path().to_owned();
     let mut response = next.run(req).await;
     let h = response.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-            .parse()
-            .expect("valid header"),
-    );
+    // The OAuth consent page sets its own, stricter one.
+    if !h.contains_key(header::CONTENT_SECURITY_POLICY) {
+        h.insert(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+                .parse()
+                .expect("valid header"),
+        );
+    }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().expect("valid header"));
     h.insert(header::X_FRAME_OPTIONS, "DENY".parse().expect("valid header"));
     h.insert(header::REFERRER_POLICY, "no-referrer".parse().expect("valid header"));
-    if path.starts_with("/api/") || path == "/mcp" {
+    if path.starts_with("/api/") || path == "/mcp" || path.starts_with("/oauth/") {
         h.insert(header::CACHE_CONTROL, "no-store".parse().expect("valid header"));
     }
     response
@@ -138,10 +143,14 @@ pub struct SetupBody {
     setup_code: String,
 }
 
-pub async fn setup(State(s): State<Shared>, Json(body): Json<SetupBody>) -> ApiResult<Response> {
+pub async fn setup(
+    State(s): State<Shared>,
+    ClientIp(client): ClientIp,
+    Json(body): Json<SetupBody>,
+) -> ApiResult<Response> {
     let token = s
         .auth
-        .setup(&body.password, &body.setup_code)
+        .setup(&body.password, &body.setup_code, RateKey::of(client))
         .await
         .map_err(auth_error)?;
     Ok(signed_in(&s, &token))
@@ -152,8 +161,16 @@ pub struct LoginBody {
     password: String,
 }
 
-pub async fn login(State(s): State<Shared>, Json(body): Json<LoginBody>) -> ApiResult<Response> {
-    let token = s.auth.login(&body.password).await.map_err(auth_error)?;
+pub async fn login(
+    State(s): State<Shared>,
+    ClientIp(client): ClientIp,
+    Json(body): Json<LoginBody>,
+) -> ApiResult<Response> {
+    let token = s
+        .auth
+        .login(&body.password, RateKey::of(client))
+        .await
+        .map_err(auth_error)?;
     Ok(signed_in(&s, &token))
 }
 
@@ -614,6 +631,25 @@ pub async fn export(State(s): State<Shared>, RawQuery(raw): RawQuery) -> ApiResu
         body,
     )
         .into_response())
+}
+
+// ---- authorised apps (OAuth) ----
+
+pub async fn oauth_apps(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    let items = s.oauth.apps().await?;
+    Ok(Json(json!({
+        "mcp_url": s.oauth.endpoints().map(|ep| ep.resource.clone()),
+        "items": items,
+    })))
+}
+
+pub async fn revoke_oauth_app(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    if s.oauth.revoke(&id).await? {
+        tracing::info!(grant = %id, "an app's authorisation was revoked in the panel");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("app_not_found", "no such authorised app"))
+    }
 }
 
 pub async fn api_not_found() -> ApiError {

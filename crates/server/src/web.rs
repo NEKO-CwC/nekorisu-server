@@ -37,6 +37,11 @@ pub async fn serve(uri: Uri) -> Response {
     if path == "api" || path.starts_with("api/") {
         return ApiError::not_found("not_found", "no such endpoint").into_response();
     }
+    // OAuth and discovery paths the server does not have are 404s, not pages
+    // of the app (a client probing for metadata must not get HTML).
+    if path.starts_with(".well-known/") || path.starts_with("oauth/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if !path.is_empty()
         && let Some(found) = asset(path)
     {
@@ -69,5 +74,8 @@ mod tests {
             serve("/missing.js".parse().unwrap()).await.status(),
             StatusCode::NOT_FOUND
         );
+        for path in ["/.well-known/openid-configuration", "/oauth/nope"] {
+            assert_eq!(serve(path.parse().unwrap()).await.status(), StatusCode::NOT_FOUND);
+        }
     }
 }

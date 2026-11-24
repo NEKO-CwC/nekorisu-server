@@ -12,6 +12,8 @@ export default defineConfig({
       "/api": backend,
       "/healthz": backend,
       "/mcp": backend,
+      "/oauth": backend,
+      "/.well-known": backend,
     },
   },
   build: {

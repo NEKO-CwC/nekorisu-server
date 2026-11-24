@@ -287,6 +287,31 @@ export interface ActivityList {
   skipped_lines: number;
 }
 
+// ---- authorised apps (OAuth) ----
+
+/** An app (an agent) that signed in to the MCP endpoint with OAuth. */
+export interface OauthApp {
+  id: string;
+  /** What the app calls itself; may be empty. */
+  client_name: string;
+  client_id: string;
+  /** true: client_id is an https URL whose document named the app; false: it registered itself. */
+  metadata_document: boolean;
+  /** Where the sign-in returned to: `host[:port]`. */
+  redirect_host: string;
+  /** true: a program on the user's own computer (localhost). */
+  loopback: boolean;
+  scope: string;
+  created_ms: number;
+  last_used_ms: number | null;
+}
+
+export interface OauthApps {
+  /** null when MCP is off (NEKORISU_PUBLIC_URL not set). */
+  mcp_url: string | null;
+  items: OauthApp[];
+}
+
 // ---- export ----
 
 export type ExportFormat = "jsonl" | "csv";

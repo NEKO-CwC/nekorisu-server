@@ -10,6 +10,7 @@ const links = [
   { to: "/storage", label: t.nav.storage, end: false },
   { to: "/activity", label: t.nav.activity, end: false },
   { to: "/export", label: t.nav.export, end: false },
+  { to: "/apps", label: t.nav.apps, end: false },
 ];
 
 function isHttpUrl(url: string): boolean {

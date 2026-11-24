@@ -5,7 +5,7 @@
 ## 约定
 
 - 路径都在 `/api` 下，JSON，字段名 `snake_case`，时间都是毫秒时间戳（字段名以 `_ms` 结尾），拿不到的值是 `null`。
-- 认证：`nk_session` cookie（`HttpOnly`、`SameSite=Strict`）。没登录返回 `401`；公开的只有 `/api/auth/state`、`/api/auth/setup`、`/api/auth/login`、`/healthz`。
+- 认证：`nk_session` cookie（`HttpOnly`、`SameSite=Strict`）。没登录返回 `401`；公开的只有 `/api/auth/state`、`/api/auth/setup`、`/api/auth/login`、`/healthz`。`/mcp` 用 OAuth 的访问令牌，见最后的 [MCP](#mcp) 一节。
 - 错误：HTTP 状态码加 `{"error": {"code": "...", "message": "..."}}`。`code` 是固定的短词，前端按它分支；`message` 给人看。
 - 会话的写法：`<agent>:<会话ID>`，`agent` 是 `claude-code` 或 `codex`。
 - 列表都是 `{"items": [...]}`，有分页的再加 `total`。
@@ -22,6 +22,9 @@
 错误：`409 already_initialized`、`403 bad_setup_code`、`400 weak_password`（少于 10 个字符）、`429 too_many_attempts`。
 
 `POST /api/auth/login`，`{"password": "..."}`：`204` 加 cookie；`401 bad_credentials`；`429 too_many_attempts`（`error` 里多一个 `retry_after_secs`）。
+一分钟内最多 5 次错误的密码，之后要等；对了的那次不算。MCP 授权页上输错的密码也算在这里面。设置码另外计数，规则一样。
+
+**按来源计数**：IPv4 按单个地址，IPv6 按 /64，一个来源输错不会把别人挡在外面。所有来源加起来一分钟最多 50 次错误，超了谁都要等到这一分钟过去（已经登录的 panel 照常用）。来源默认是连到服务端的那个地址；放在反向代理后面时，设 `NEKORISU_TRUSTED_PROXIES`（逗号分隔的网段，如 `10.42.0.0/16`），对端在这些网段里才相信它的 `X-Real-IP`，没有或不合法就取 `X-Forwarded-For` 从右数第一个不是可信代理的地址，再不行就算对端自己。不设的话，代理后面的所有人都算同一个来源。`::ffff:` 写法的 IPv4 当作 IPv4。网段写错了服务端起不来。
 
 `POST /api/auth/logout`：`204`。
 
@@ -207,9 +210,62 @@
 `GET /api/export?format=jsonl&fields=session,user,tokens&agent=&device=&session=&since_ms=&until_ms=`：
 - 响应是下载：`Content-Disposition: attachment`，流式输出，每行对应一条用户原话；`fields` 不给就是全部；`session` 可以重复。
 
+## 授权的应用
+
+用 OAuth 登录过 MCP 的 Agent。
+
+`GET /api/oauth/apps`：
+```json
+{
+  "mcp_url": "https://nekorisu.example.com/mcp",
+  "items": [ {
+    "id": "3f2a…", "client_name": "Claude Code",
+    "client_id": "https://agent.example/oauth/client.json", "metadata_document": true,
+    "redirect_host": "localhost:51234", "loopback": true, "scope": "nekorisu:read",
+    "created_ms": 1794700800000, "last_used_ms": 1794700900000
+  } ]
+}
+```
+- `mcp_url` 是 `null` 表示 MCP 没开（没设 `NEKORISU_PUBLIC_URL`）。
+- 每次批准是一条；只列还能用的（刷新令牌没过期、没撤销）。`metadata_document` 为 true 时名字取自 `client_id` 那个网址上的说明文档，为 false 时是应用注册时自己填的。`last_used_ms` 最多每分钟更新一次。不返回任何令牌。
+
+`POST /api/oauth/apps/{id}/revoke`：`204`，它的访问令牌和刷新令牌立刻失效；没有这一条 `404 app_not_found`。
+
 ## MCP
 
-`POST /mcp`：Streamable HTTP，JSON-RPC 2.0，只有 `initialize`、`ping`、`tools/list`、`tools/call`。认证：`Authorization: Bearer <NEKORISU_MCP_TOKEN>`；没设令牌，这个路径返回 `404`。工具见 `tools/list`。
+`POST /mcp`：Streamable HTTP，JSON-RPC 2.0，只有 `initialize`、`ping`、`tools/list`、`tools/call`。工具见 `tools/list`。没设 `NEKORISU_PUBLIC_URL` 时 MCP 关着，下面的路径都返回 `404`。
+
+**认证**是 OAuth 2.1，照 MCP 的授权规范：`Authorization: Bearer <访问令牌>`，令牌只能是这台服务端为 `<公网地址>/mcp` 签发的。没有令牌或令牌不对（过期、撤销、发给别的地址的）返回 `401`：
+```
+WWW-Authenticate: Bearer resource_metadata="https://nekorisu.example.com/.well-known/oauth-protected-resource/mcp", scope="nekorisu:read"
+```
+带了令牌但不对时，后面再加 `, error="invalid_token"`。Agent 照这个头自己去登录，人只要在浏览器里批准：
+
+```bash
+claude mcp add --transport http -s user nekorisu-server https://nekorisu.example.com/mcp
+claude mcp login nekorisu-server
+
+codex mcp add nekorisu-server --url https://nekorisu.example.com/mcp
+codex mcp login nekorisu-server
+```
+
+不要在 Agent 的配置里写死 `Authorization` 头：写了它就不走 OAuth。
+
+| 路径 | 做什么 |
+|---|---|
+| `GET /.well-known/oauth-protected-resource/mcp`（和不带 `/mcp` 的） | 受保护资源元数据（RFC 9728）：`resource`、`authorization_servers`（就是这台服务端）、`scopes_supported`、`bearer_methods_supported` |
+| `GET /.well-known/oauth-authorization-server` | 授权服务器元数据（RFC 8414）：只有 `code`、PKCE 只认 `S256`、只有公开客户端（`none`）、`client_id_metadata_document_supported`、`authorization_response_iss_parameter_supported` |
+| `POST /oauth/register` | 动态注册（RFC 7591），只收公开客户端：`redirect_uris`（1 到 10 个）、`client_name`。返回 `201` 和 `client_id`。同一个来源（同上）10 分钟内最多注册 10 个，所有来源加起来 100 个，超了返回 `429` 和 `Retry-After`；没人批准的注册一天后清掉，最多留 500 个 |
+| `GET /oauth/authorize` | 检查请求，给人看授权页（见下） |
+| `POST /oauth/authorize` | 授权页提交：批准要管理员密码；成功 `302` 回到 `redirect_uri`，带 `code`、`state`、`iss` |
+| `POST /oauth/token` | `authorization_code` 和 `refresh_token` 两种 |
+
+- **范围**只有一个：`nekorisu:read`（读会话、设备、导出）。请求里带 `offline_access` 也行，不影响什么；别的范围返回 `invalid_scope`。
+- **客户端**：`client_id` 是 https 网址时，服务端去取那个网址上的说明文档（Client ID Metadata Document），要求里面的 `client_id` 就是这个网址、有 `client_name` 和 `redirect_uris`，缓存 10 分钟；只连公网地址，5 秒超时，最大 64 KiB。198.18.0.0/15 不算公网：fake-IP 的 DNS 代理（sing-box、Clash 这类）把所有外网域名都解析到这个段，看不出请求真正去哪。服务端所在机器的 DNS 是这种代理时，设 `NEKORISU_DNS_OVER_HTTPS`（如 `https://1.1.1.1/dns-query`，主机必须写 IP），说明文档的域名（每次跳转都一样）改走 DNS over HTTPS（RFC 8484）解析；它出错就取不到文档。没设时用系统的 DNS，解析出来全是 fake-IP 的地址时日志里会这样提示。别的 `client_id` 要先在 `/oauth/register` 注册过。`NEKORISU_OAUTH_CLIENT_METADATA_DOCUMENTS=false` 关掉网址形式，Agent 会改用注册。
+- **返回地址**要和登记的完全一样；只有本机的 `http://localhost`、`http://127.0.0.1`、`http://[::1]` 端口可以不同（RFC 8252）。其他的只能是 https。`client_id` 或返回地址不对时不跳转，直接显示错误页；之后的错误（`invalid_request`、`invalid_target`、`invalid_scope`、`unsupported_response_type`、`access_denied`）跳回去，带 `state` 和 `iss`。
+- **授权请求**：`response_type=code`、`client_id`、`redirect_uri`、`code_challenge` 加 `code_challenge_method=S256`（必须）、`state`、`resource`（不给就是 `<公网地址>/mcp`，给了必须是它）、`scope`。
+- **授权页**：中文，没有脚本；写着哪个应用、授权后回到哪里（本机的就说是这台电脑上的程序）、能做什么，一个管理员密码框，批准、拒绝。表单里带一个一次性的请求 ID 和 CSRF 令牌，10 分钟有效。还没设管理员密码时只提示先去 panel 设置。页面不能被嵌进框架（`X-Frame-Options: DENY`、`frame-ancestors 'none'`），`Cache-Control: no-store`。
+- **令牌**：授权码 5 分钟、只能用一次（第二次用会撤销它换来的令牌），和 `client_id`、`redirect_uri`、`code_challenge`、`resource`、`scope` 绑定；访问令牌 1 小时；刷新令牌 30 天，每次刷新都换新的，旧的再出现就撤销整个授权。都是随机的不透明字符串，库里只存 SHA-256。错误按 RFC 6749：`{"error": "invalid_grant", "error_description": "..."}`。
 
 ## 其他
 

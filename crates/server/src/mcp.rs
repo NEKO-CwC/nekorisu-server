@@ -4,6 +4,9 @@
 //!
 //! JSON-RPC 2.0 over POST, JSON replies, tools only: no server push, no
 //! sessions. Hand-written, like the client's, because the surface is small.
+//!
+//! Only OAuth access tokens issued for this endpoint are accepted (see
+//! `oauth`); without NEKORISU_PUBLIC_URL the endpoint is off (404).
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -13,7 +16,6 @@ use futures::StreamExt;
 use nekorisu_archive::{Kind, LinesQuery, SessionFilter};
 use nekorisu_export::{ExportRequest, Format, Scope, display_text, export_stream, select_fields};
 use serde_json::{Value, json};
-use subtle::ConstantTimeEq;
 
 use crate::state::Shared;
 use crate::util::{cut, parse_rfc3339, rfc3339};
@@ -36,28 +38,10 @@ fn json_response(value: Value) -> Response {
     ([(header::CONTENT_TYPE, "application/json")], value.to_string()).into_response()
 }
 
-fn authorized(s: &Shared, headers: &HeaderMap) -> Option<bool> {
-    let expected = s.settings.mcp_token.as_deref().filter(|t| !t.is_empty())?;
-    let given = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
-        .unwrap_or_default();
-    Some(bool::from(given.trim().as_bytes().ct_eq(expected.as_bytes())))
-}
-
 pub async fn handle(State(s): State<Shared>, headers: HeaderMap, body: Bytes) -> Response {
-    match authorized(&s, &headers) {
-        None => return StatusCode::NOT_FOUND.into_response(), // MCP is off
-        Some(false) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                [(header::WWW_AUTHENTICATE, "Bearer")],
-                "a bearer token is required",
-            )
-                .into_response();
-        }
-        Some(true) => {}
+    // 404 when MCP is off, 401 with where to sign in when the token is not good.
+    if let Some(denied) = s.oauth.bearer_denial(&headers).await {
+        return denied;
     }
     let Ok(message) = serde_json::from_slice::<Value>(&body) else {
         return error_reply(Value::Null, -32700, "parse error");

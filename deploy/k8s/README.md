@@ -10,7 +10,7 @@ cp -r deploy/k8s deploy/k8s.local
 ```
 
 `deploy/k8s.local/` 已被 `.gitignore` 忽略，不会进仓库。
-在 `20-deployment.yaml` 里改 `NEKORISU_WEBDAV_URL`、`NEKORISU_WEBDAV_USER`、`NEKORISU_PUBLIC_URL`，在 `40-ingress.yaml` 里改域名和 ClusterIssuer。
+在 `20-deployment.yaml` 里改 `NEKORISU_WEBDAV_URL`、`NEKORISU_WEBDAV_USER`、`NEKORISU_PUBLIC_URL`、`NEKORISU_TRUSTED_PROXIES`（见下面的“来源地址”），在 `40-ingress.yaml` 里改域名和 ClusterIssuer。
 下面的命令都对着 `deploy/k8s.local/` 运行。
 
 ## 1. 构建镜像并导入 k3s
@@ -32,14 +32,13 @@ docker save local/nekorisu-server:0.1.0-20261123 | k3s ctr -n k8s.io images impo
 kubectl apply -f deploy/k8s.local/00-namespace.yaml
 printf %s "<WebDAV 密码>" | kubectl -n nekorisu create secret generic nekorisu-secrets \
   --from-file=webdav-password=/dev/stdin \
-  --from-literal=device-token="$(openssl rand -hex 32)" \
-  --from-literal=mcp-token="$(openssl rand -hex 32)"
+  --from-literal=device-token="$(openssl rand -hex 32)"
 ```
 
 - `webdav-password`：存储的密码；用户名和地址在 `20-deployment.yaml` 里。`NEKORISU_WEBDAV_URL` 和客户端填同一个地址：归档在它下面的 `nekorisu/v1/`，所以填 `nekorisu/` 的上一层。
   OpenList / Alist 的 `/dav` 根是虚拟的，只能写在挂载的存储里：加一个挂载路径为 `/nekorisu` 的存储，地址填 `…/dav` 即可。
 - `device-token`：设备拉配置、上报时用。
-- `mcp-token`：Agent 连 `/mcp` 时用。
+- MCP 没有令牌要配：Agent 用 OAuth 登录（第 5 步）。
 
 ## 3. 部署
 
@@ -57,11 +56,31 @@ kubectl -n nekorisu get certificate,ingress
 kubectl -n nekorisu logs deploy/nekorisu-server | grep "Setup code"
 ```
 
-## 5. 取令牌（给 Agent 配 MCP 用）
+## 5. 接 Agent（MCP）
+
+`20-deployment.yaml` 里的 `NEKORISU_PUBLIC_URL` 要是 Agent 访问的地址（端口不是 443 就带上），MCP 才开。
+在 Agent 所在的电脑上：
 
 ```bash
-kubectl -n nekorisu get secret nekorisu-secrets -o jsonpath="{.data.mcp-token}" | base64 -d
+claude mcp add --transport http -s user nekorisu-server https://nekorisu.example.com/mcp
+claude mcp login nekorisu-server
+# Codex
+codex mcp add nekorisu-server --url https://nekorisu.example.com/mcp
+codex mcp login nekorisu-server
 ```
+
+`login` 打开浏览器，输入 panel 的管理员密码批准（所以先做完第 4 步）。不用复制令牌；panel 的“应用”页可以撤销。
+OAuth 的路径（`/.well-known/…`、`/oauth/…`）和 `/mcp` 一样走这个 ingress，不用另外配。
+
+Agent 用网址当 `client_id` 时（Claude Code 就是），服务端要能连到那个网址去取应用的说明文档；Pod 出不了公网的话，设 `NEKORISU_OAUTH_CLIENT_METADATA_DOCUMENTS=false`，Agent 会改用动态注册。
+
+节点的 DNS 是 fake-IP 代理（sing-box、Clash 这类，外网域名都解析成 198.18.x.x；CoreDNS 转发给节点，所以 Pod 里也一样）时，服务端看不出说明文档真正在哪，不会去取，日志里会提示。这时在 `20-deployment.yaml` 里打开 `NEKORISU_DNS_OVER_HTTPS`（例如 `https://1.1.1.1/dns-query` 或 `https://223.5.5.5/dns-query`，主机必须写 IP），服务端就通过 DNS over HTTPS 解析这些域名。
+
+## 来源地址
+
+panel 的登录、设置码、MCP 授权页上的密码和 OAuth 注册都按来源地址限速。Pod 看到的对端是 ingress-nginx，所以 `NEKORISU_TRUSTED_PROXIES` 要包含 ingress-nginx 控制器 Pod 的网段（样例是 k3s 默认的 `10.42.0.0/16`，换成你集群的）：对端在这些网段里，服务端才相信它给的 `X-Real-IP`、`X-Forwarded-For`。网段里的其他 Pod 也能自称任何来源，在意的话写窄一些。不设的话，所有请求都算 ingress 一个来源，一个人输错几次密码就把所有人挡在外面一分钟。
+
+ingress-nginx 自己看到的也得是客户端的真实地址：比如它的 Service 用 `externalTrafficPolicy: Local`；前面还有一层只做 TLS 透传的代理时，那一层和 ingress-nginx 都要开 PROXY protocol。不然所有人还是同一个来源。
 
 ## 备份
 

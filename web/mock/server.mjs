@@ -7,6 +7,7 @@
 //   MOCK_CONFIG_NULL=1   nothing was ever published (config.current is null)
 //   MOCK_RANGE=false|null  storage range_read value (default true)
 //   MOCK_STORAGE_ERROR=1 storage is down
+//   MOCK_MCP_OFF=1       the apps page says MCP is off
 //   PORT                 default 8080
 
 import { createHash, randomBytes } from "node:crypto";
@@ -762,6 +763,32 @@ function exportDownload(url, res) {
   res.end();
 }
 
+// Authorised apps (OAuth). Synthetic.
+let oauthApps = [
+  {
+    id: "g1",
+    client_name: "Claude Code",
+    client_id: "https://agent.example/oauth/client.json",
+    metadata_document: true,
+    redirect_host: "localhost:51234",
+    loopback: true,
+    scope: "nekorisu:read",
+    created_ms: NOW - 3 * DAY,
+    last_used_ms: NOW - 20 * MIN,
+  },
+  {
+    id: "g2",
+    client_name: "",
+    client_id: "nk-0123456789abcdef",
+    metadata_document: false,
+    redirect_host: "127.0.0.1:40000",
+    loopback: true,
+    scope: "nekorisu:read",
+    created_ms: NOW - DAY,
+    last_used_ms: null,
+  },
+];
+
 async function handle(req, res) {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -880,6 +907,21 @@ async function handle(req, res) {
     return json(res, 200, { formats: ["jsonl", "csv"], fields: EXPORT_FIELDS });
   }
   if (path === "/api/export" && method === "GET") return exportDownload(url, res);
+
+  if (path === "/api/oauth/apps" && method === "GET") {
+    return json(res, 200, {
+      mcp_url: process.env.MOCK_MCP_OFF === "1" ? null : "https://nekorisu.example.com/mcp",
+      items: oauthApps,
+    });
+  }
+  const revoke = path.match(/^\/api\/oauth\/apps\/([^/]+)\/revoke$/);
+  if (revoke && method === "POST") {
+    const before = oauthApps.length;
+    oauthApps = oauthApps.filter((a) => a.id !== decodeURIComponent(revoke[1]));
+    if (oauthApps.length === before) return apiError(res, 404, "app_not_found", "no such authorised app");
+    res.writeHead(204);
+    return res.end();
+  }
 
   return apiError(res, 404, "not_found", "没有这个接口");
 }

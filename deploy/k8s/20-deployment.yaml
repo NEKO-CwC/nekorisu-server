@@ -47,13 +47,21 @@ spec:
             - name: NEKORISU_DEVICE_TOKEN
               valueFrom:
                 secretKeyRef: { name: nekorisu-secrets, key: device-token }
-            - name: NEKORISU_MCP_TOKEN
-              valueFrom:
-                secretKeyRef: { name: nekorisu-secrets, key: mcp-token }
+            # The public address (with the port if it is not 443). MCP is on only when it is
+            # set; agents sign in with OAuth against it (README.md, step 5).
             - name: NEKORISU_PUBLIC_URL
               value: https://nekorisu.example.com
             - name: NEKORISU_COOKIE_SECURE
               value: "true"
+            # The ingress controller's pods (here the k3s default pod network; use your cluster's).
+            # Only requests from these may name the client with X-Real-IP / X-Forwarded-For, so
+            # that wrong passwords are counted per client (README.md, "来源地址").
+            - name: NEKORISU_TRUSTED_PROXIES
+              value: 10.42.0.0/16
+            # When the node's DNS is a fake-IP proxy, look up the hosts of agents' client metadata
+            # documents through DNS over HTTPS; the host must be an IP address (README.md, step 5).
+            # - name: NEKORISU_DNS_OVER_HTTPS
+            #   value: https://1.1.1.1/dns-query
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 10

@@ -3,6 +3,10 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use url::{Host, Url};
+
+use crate::client_ip::{Cidr, parse_trusted_proxies};
+
 #[derive(Clone)]
 pub struct WebDavSettings {
     pub url: String,
@@ -20,12 +24,23 @@ pub struct Settings {
     pub grpc_tls: Option<(PathBuf, PathBuf)>,
     pub webdav: Option<WebDavSettings>,
     pub device_token: Option<String>,
-    pub mcp_token: Option<String>,
     pub public_config: bool,
     pub signing_key_file: PathBuf,
     pub cookie_secure: bool,
-    /// The address devices should use, for the connect command in the panel.
+    /// The server's public address, like `https://nekorisu.example.com:8443`
+    /// (no trailing slash). The MCP endpoint and its OAuth sign-in are on only
+    /// when it is set: the issuer and the token audience come from it. Also
+    /// used for the device connect command in the panel.
     pub public_url: Option<String>,
+    /// Accept clients that name themselves with an https URL (OAuth Client ID
+    /// Metadata Documents). Off makes such clients fall back to registering.
+    pub oauth_metadata_documents: bool,
+    /// Reverse proxies whose `X-Real-IP` and `X-Forwarded-For` are believed
+    /// (`crate::client_ip`). Empty: the peer address is the client.
+    pub trusted_proxies: Vec<Cidr>,
+    /// A DNS-over-HTTPS resolver (RFC 8484) for the hosts of client metadata
+    /// documents, instead of the system's. Its host is an IP address.
+    pub dns_over_https: Option<Url>,
 }
 
 /// Never prints a token or a password, only whether one is set.
@@ -40,8 +55,11 @@ impl std::fmt::Debug for Settings {
             .field("grpc_tls", &self.grpc_tls.is_some())
             .field("webdav", &self.webdav.as_ref().map(|d| d.url.as_str()))
             .field("device_token_set", &self.device_token.is_some())
-            .field("mcp_token_set", &self.mcp_token.is_some())
             .field("public_config", &self.public_config)
+            .field("public_url", &self.public_url)
+            .field("oauth_metadata_documents", &self.oauth_metadata_documents)
+            .field("trusted_proxies", &self.trusted_proxies.len())
+            .field("dns_over_https", &self.dns_over_https.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -52,6 +70,65 @@ fn flag(text: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" | "" => Some(false),
         _ => None,
     }
+}
+
+/// Checks NEKORISU_PUBLIC_URL: https (http only on localhost), just the
+/// origin, written without a trailing slash.
+fn public_url(text: &str) -> Result<String, String> {
+    let bad = |why: &str| {
+        format!(
+            "NEKORISU_PUBLIC_URL {text:?}: {why}; write it like https://nekorisu.example.com or https://nekorisu.example.com:8443"
+        )
+    };
+    let url = Url::parse(text.trim()).map_err(|_| bad("not a URL"))?;
+    let local = match url.host() {
+        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => return Err(bad("no host")),
+    };
+    match url.scheme() {
+        "https" => {}
+        "http" if local => {}
+        _ => return Err(bad("must be https (http only for localhost)")),
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(bad("only the scheme, host and port, no path"));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+/// Checks NEKORISU_DNS_OVER_HTTPS: an https URL whose host is an IP address.
+/// A name would itself be looked up through the system DNS, which is what
+/// this setting is there to get around (a fake-IP proxy answers every name).
+fn dns_over_https(text: &str) -> Result<Url, String> {
+    let bad = |why: &str| {
+        format!(
+            "NEKORISU_DNS_OVER_HTTPS {text:?}: {why}; write it like https://1.1.1.1/dns-query or https://223.5.5.5/dns-query"
+        )
+    };
+    let url = Url::parse(text.trim()).map_err(|_| bad("not a URL"))?;
+    if url.scheme() != "https" {
+        return Err(bad("must be https"));
+    }
+    match url.host() {
+        Some(Host::Ipv4(_) | Host::Ipv6(_)) => {}
+        Some(Host::Domain(_)) => {
+            return Err(bad(
+                "the host must be an IP address, since looking up a name would go through the system DNS this is meant to avoid",
+            ));
+        }
+        None => return Err(bad("no host")),
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err(bad("no user name, password or fragment"));
+    }
+    Ok(url)
 }
 
 impl Settings {
@@ -113,13 +190,15 @@ impl Settings {
             grpc_tls: tls,
             webdav,
             device_token: secret("NEKORISU_DEVICE_TOKEN")?,
-            mcp_token: secret("NEKORISU_MCP_TOKEN")?,
             public_config: boolean("NEKORISU_PUBLIC_CONFIG", false)?,
             signing_key_file: var("NEKORISU_SIGNING_KEY_FILE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| data_dir.join("signing-key.json")),
             cookie_secure: boolean("NEKORISU_COOKIE_SECURE", false)?,
-            public_url: var("NEKORISU_PUBLIC_URL"),
+            public_url: var("NEKORISU_PUBLIC_URL").map(|u| public_url(&u)).transpose()?,
+            oauth_metadata_documents: boolean("NEKORISU_OAUTH_CLIENT_METADATA_DOCUMENTS", true)?,
+            trusted_proxies: parse_trusted_proxies(&var("NEKORISU_TRUSTED_PROXIES").unwrap_or_default())?,
+            dns_over_https: var("NEKORISU_DNS_OVER_HTTPS").map(|u| dns_over_https(&u)).transpose()?,
             data_dir,
         })
     }
@@ -143,8 +222,48 @@ mod tests {
         assert_eq!(s.grpc_addr.to_string(), "0.0.0.0:7070");
         assert_eq!(s.database_url, "sqlite://data/nekorisu.db");
         assert_eq!(s.signing_key_file, PathBuf::from("data/signing-key.json"));
-        assert!(s.webdav.is_none() && s.device_token.is_none() && s.mcp_token.is_none());
-        assert!(!s.public_config && !s.cookie_secure);
+        assert!(s.webdav.is_none() && s.device_token.is_none() && s.public_url.is_none());
+        assert!(!s.public_config && !s.cookie_secure && s.oauth_metadata_documents);
+        assert!(s.trusted_proxies.is_empty() && s.dns_over_https.is_none());
+    }
+
+    #[test]
+    fn trusted_proxies_are_ranges_or_a_startup_error() {
+        let s = settings(&[("NEKORISU_TRUSTED_PROXIES", "10.42.0.0/16, 2001:db8::/32")]).unwrap();
+        assert_eq!(s.trusted_proxies.len(), 2);
+        assert!(s.trusted_proxies[0].contains("10.42.3.4".parse().unwrap()));
+        for bad in [
+            "10.42.0.0/40",
+            "10.42.0.0/16 2001:db8::/32",
+            "ingress-nginx",
+            "10.42.0.0/16,/8",
+        ] {
+            let error = settings(&[("NEKORISU_TRUSTED_PROXIES", bad)]).err().unwrap();
+            assert!(error.starts_with("NEKORISU_TRUSTED_PROXIES"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn the_dns_over_https_resolver_is_named_by_ip_address() {
+        let url = |v: &str| settings(&[("NEKORISU_DNS_OVER_HTTPS", v)]).map(|s| s.dns_over_https.unwrap());
+        assert_eq!(
+            url("https://1.1.1.1/dns-query").unwrap().as_str(),
+            "https://1.1.1.1/dns-query"
+        );
+        assert_eq!(
+            url(" https://[2001:db8::53]:8443/dns-query ").unwrap().as_str(),
+            "https://[2001:db8::53]:8443/dns-query"
+        );
+        let error = url("https://dns.example.com/dns-query").unwrap_err();
+        assert!(error.contains("must be an IP address"), "{error}");
+        for bad in [
+            "http://192.0.2.53/dns-query",
+            "https://user:pw@192.0.2.53/dns-query",
+            "192.0.2.53",
+            "not a url",
+        ] {
+            assert!(url(bad).unwrap_err().starts_with("NEKORISU_DNS_OVER_HTTPS"), "{bad}");
+        }
     }
 
     #[test]
@@ -162,11 +281,9 @@ mod tests {
         let s = settings(&[
             ("NEKORISU_DEVICE_TOKEN_FILE", path.to_str().unwrap()),
             ("NEKORISU_DEVICE_TOKEN", "ignored"),
-            ("NEKORISU_MCP_TOKEN", "plain"),
         ])
         .unwrap();
         assert_eq!(s.device_token.as_deref(), Some("from-file"));
-        assert_eq!(s.mcp_token.as_deref(), Some("plain"));
         assert!(settings(&[("NEKORISU_DEVICE_TOKEN_FILE", "/nonexistent/x")]).is_err());
     }
 
@@ -182,6 +299,36 @@ mod tests {
         let dav = s.webdav.unwrap();
         assert_eq!(dav.url, "https://dav.example/files/backup");
         assert_eq!(dav.password.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn the_public_url_is_just_an_origin() {
+        let url = |v: &str| settings(&[("NEKORISU_PUBLIC_URL", v)]).map(|s| s.public_url.unwrap());
+        assert_eq!(
+            url("https://nekorisu.example.com").unwrap(),
+            "https://nekorisu.example.com"
+        );
+        assert_eq!(
+            url("https://Nekorisu.Example.com:8443/").unwrap(),
+            "https://nekorisu.example.com:8443"
+        );
+        assert_eq!(
+            url("https://nekorisu.example.com:443").unwrap(),
+            "https://nekorisu.example.com"
+        );
+        assert_eq!(url("http://localhost:8080").unwrap(), "http://localhost:8080");
+        assert_eq!(url("http://127.0.0.1:8080").unwrap(), "http://127.0.0.1:8080");
+        for bad in [
+            "http://nekorisu.example.com",
+            "https://nekorisu.example.com/panel",
+            "https://nekorisu.example.com/?x=1",
+            "https://me@nekorisu.example.com",
+            "nekorisu.example.com",
+        ] {
+            assert!(url(bad).unwrap_err().contains("NEKORISU_PUBLIC_URL"), "{bad}");
+        }
+        let off = settings(&[("NEKORISU_OAUTH_CLIENT_METADATA_DOCUMENTS", "false")]).unwrap();
+        assert!(!off.oauth_metadata_documents);
     }
 
     #[test]

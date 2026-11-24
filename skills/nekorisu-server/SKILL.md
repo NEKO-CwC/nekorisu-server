@@ -14,15 +14,25 @@ nekorisu 服务端把用户在各台设备上归档的会话汇在一处。这�
 
 ## 接上
 
-服务端要设了 `NEKORISU_MCP_TOKEN`，MCP 才开。令牌由用户保管，**让用户自己填，不要让用户把令牌发给你**。
+用 OAuth 登录，**没有要复制的令牌**：登录命令会打开浏览器，用户在服务端的页面上输入 panel 的管理员密码批准，Agent 自动拿到令牌、自己续期。密码只在浏览器里输，**不要让用户把密码或令牌发给你**。服务端要设了 `NEKORISU_PUBLIC_URL`，MCP 才开。
 
 Claude Code：
 
 ```bash
-claude mcp add --transport http nekorisu-server https://<服务端地址>/mcp --header "Authorization: Bearer <令牌>"
+claude mcp add --transport http -s user nekorisu-server https://<服务端地址>/mcp
+claude mcp login nekorisu-server
 ```
 
-其他 Agent：按它的文档添加 HTTP 形式的 MCP 服务器，地址是 `https://<服务端地址>/mcp`，请求头 `Authorization: Bearer <令牌>`。
+Codex：
+
+```bash
+codex mcp add nekorisu-server --url https://<服务端地址>/mcp
+codex mcp login nekorisu-server
+```
+
+其他 Agent：按它的文档添加 HTTP 形式的 MCP 服务器，地址是 `https://<服务端地址>/mcp`，用它的 OAuth 登录。
+
+**不要在配置里写 `Authorization` 头**：写了静态的头，Agent 就不走 OAuth，服务端也不认静态令牌，只会一直 401。以前按旧说明写过的，删掉那个头再登录。授权可以在 panel 的“应用”页撤销；撤销或过期太久后，重新运行 login。
 
 ## 工具
 
