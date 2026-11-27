@@ -42,6 +42,7 @@ codex mcp login nekorisu-server
 | `get_session` | 一个会话的版本（有多个头就是分叉）、文件、子会话 |
 | `read_lines` | 按行号或种类读：`user` 人说的话、`assistant` 回复、`reasoning`、`tool`、`meta`；`max_field_chars` 限制每行长度 |
 | `list_devices` | 设备、上传了什么、最后什么时候上报 |
+| `setup_info` | 把一台电脑接到这台服务端要填什么：存储地址和用户名（没有密码）、`nekorisu source add` 命令 |
 | `export` | 每条用户原话一行：原话、它回应的回复、间隔、模型、token（子 Agent 算进去）、请求数等；用 `fields` 只要需要的 |
 
 ## 怎么读

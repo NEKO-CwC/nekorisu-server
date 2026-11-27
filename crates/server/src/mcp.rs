@@ -81,7 +81,8 @@ fn initialize(params: &Value) -> Value {
         "serverInfo": { "name": "nekorisu-server", "version": env!("CARGO_PKG_VERSION") },
         "instructions": "Agent sessions (Claude Code, Codex) from all of the user's devices, kept byte-exact. Read-only. \
             list_sessions to find, get_session for versions and files, then read_lines with kinds=[\"user\"] for what the \
-            person said, more only if needed. export gives one row per user message with timings and tokens."
+            person said, more only if needed. export gives one row per user message with timings and tokens. setup_info tells \
+            how to connect a device (storage address, user name, connect command)."
     })
 }
 
@@ -121,6 +122,11 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
+            "name": "setup_info",
+            "description": "What a device needs to connect to this server: the storage address and user name the server reads (the password is never here), the MCP address, and the `nekorisu source add` command with the server's public key. Use it while installing nekorisu on a device.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "export",
             "description": "One JSON row per user message: the words, the reply they answer, gaps, model, tokens (sub-agents included). Choose fields to keep it small. Up to 200 rows by default.",
             "inputSchema": { "type": "object", "properties": {
@@ -140,6 +146,7 @@ async fn call(s: &Shared, params: &Value) -> Value {
         "get_session" => get_session(s, &args).await,
         "read_lines" => read_lines(s, &args).await,
         "list_devices" => list_devices(s).await,
+        "setup_info" => serde_json::to_string_pretty(&crate::connect::info(s, true).await).map_err(failure),
         "export" => export(s, &args).await,
         other => Err(format!("unknown tool: {other}")),
     };

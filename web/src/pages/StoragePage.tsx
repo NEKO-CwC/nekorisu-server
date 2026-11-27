@@ -17,6 +17,16 @@ export function StoragePage() {
             <dd>
               <code>{s.description}</code>
             </dd>
+            <dt>{t.storage.forDevices}</dt>
+            <dd>
+              <dl className="fields">
+                <dt>{t.storage.address}</dt>
+                <dd>{s.address ? <code>{s.address}</code> : t.storage.notSet}</dd>
+                <dt>{t.storage.username}</dt>
+                <dd>{s.username ? <code>{s.username}</code> : t.storage.notSet}</dd>
+              </dl>
+              <p className="muted">{t.storage.forDevicesHint}</p>
+            </dd>
             <dt>{t.storage.status}</dt>
             <dd>
               {s.ok ? (

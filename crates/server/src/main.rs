@@ -129,6 +129,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ),
     }
 
+    if settings.connect_page {
+        let base = settings.public_url.as_deref().unwrap_or("http://<this server>");
+        tracing::info!(
+            storage_shown = settings.connect_show_storage,
+            "connection notes for people and agents (no sign-in, nothing secret): {base}/connect"
+        );
+    }
+
     let state = Arc::new(AppState {
         settings: settings.clone(),
         archive,

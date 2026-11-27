@@ -32,6 +32,14 @@ pub struct Settings {
     /// when it is set: the issuer and the token audience come from it. Also
     /// used for the device connect command in the panel.
     pub public_url: Option<String>,
+    /// Where devices reach the device protocol, when it is not the public
+    /// address (a gRPC port of its own, as in the Docker Compose example).
+    pub device_url: Option<String>,
+    /// The public connection notes (`/connect`, `/.well-known/nekorisu`).
+    pub connect_page: bool,
+    /// Put the storage address and user name on the public notes too, for a
+    /// server only reachable on a private network. Off: only after sign-in.
+    pub connect_show_storage: bool,
     /// Accept clients that name themselves with an https URL (OAuth Client ID
     /// Metadata Documents). Off makes such clients fall back to registering.
     pub oauth_metadata_documents: bool,
@@ -57,6 +65,9 @@ impl std::fmt::Debug for Settings {
             .field("device_token_set", &self.device_token.is_some())
             .field("public_config", &self.public_config)
             .field("public_url", &self.public_url)
+            .field("device_url", &self.device_url)
+            .field("connect_page", &self.connect_page)
+            .field("connect_show_storage", &self.connect_show_storage)
             .field("oauth_metadata_documents", &self.oauth_metadata_documents)
             .field("trusted_proxies", &self.trusted_proxies.len())
             .field("dns_over_https", &self.dns_over_https.is_some())
@@ -72,12 +83,12 @@ fn flag(text: &str) -> Option<bool> {
     }
 }
 
-/// Checks NEKORISU_PUBLIC_URL: https (http only on localhost), just the
-/// origin, written without a trailing slash.
-fn public_url(text: &str) -> Result<String, String> {
+/// Checks NEKORISU_PUBLIC_URL (or NEKORISU_DEVICE_URL, `name`): https (http
+/// only on localhost), just the origin, written without a trailing slash.
+fn public_url(name: &str, text: &str) -> Result<String, String> {
     let bad = |why: &str| {
         format!(
-            "NEKORISU_PUBLIC_URL {text:?}: {why}; write it like https://nekorisu.example.com or https://nekorisu.example.com:8443"
+            "{name} {text:?}: {why}; write it like https://nekorisu.example.com or https://nekorisu.example.com:8443"
         )
     };
     let url = Url::parse(text.trim()).map_err(|_| bad("not a URL"))?;
@@ -195,7 +206,14 @@ impl Settings {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| data_dir.join("signing-key.json")),
             cookie_secure: boolean("NEKORISU_COOKIE_SECURE", false)?,
-            public_url: var("NEKORISU_PUBLIC_URL").map(|u| public_url(&u)).transpose()?,
+            public_url: var("NEKORISU_PUBLIC_URL")
+                .map(|u| public_url("NEKORISU_PUBLIC_URL", &u))
+                .transpose()?,
+            device_url: var("NEKORISU_DEVICE_URL")
+                .map(|u| public_url("NEKORISU_DEVICE_URL", &u))
+                .transpose()?,
+            connect_page: boolean("NEKORISU_CONNECT_PAGE", true)?,
+            connect_show_storage: boolean("NEKORISU_CONNECT_SHOW_STORAGE", false)?,
             oauth_metadata_documents: boolean("NEKORISU_OAUTH_CLIENT_METADATA_DOCUMENTS", true)?,
             trusted_proxies: parse_trusted_proxies(&var("NEKORISU_TRUSTED_PROXIES").unwrap_or_default())?,
             dns_over_https: var("NEKORISU_DNS_OVER_HTTPS").map(|u| dns_over_https(&u)).transpose()?,
@@ -225,6 +243,7 @@ mod tests {
         assert!(s.webdav.is_none() && s.device_token.is_none() && s.public_url.is_none());
         assert!(!s.public_config && !s.cookie_secure && s.oauth_metadata_documents);
         assert!(s.trusted_proxies.is_empty() && s.dns_over_https.is_none());
+        assert!(s.connect_page && !s.connect_show_storage && s.device_url.is_none());
     }
 
     #[test]

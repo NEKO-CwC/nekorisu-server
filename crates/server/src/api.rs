@@ -473,8 +473,9 @@ pub async fn config(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     let public_key = s.signer.public_key();
     let url = s
         .settings
-        .public_url
+        .device_url
         .clone()
+        .or_else(|| s.settings.public_url.clone())
         .unwrap_or_else(|| "<server address>".to_string());
     Ok(Json(json!({
         "current": current,
@@ -672,8 +673,13 @@ pub async fn storage(State(s): State<Shared>) -> ApiResult<Json<Value>> {
             let _ = provider.read(&file.path, Some(0..1)).await;
         }
     }
+    // What a device fills in (`nekorisu storage add`): the same address and
+    // user name. The password is never returned.
+    let dav = s.settings.webdav.as_ref();
     Ok(Json(json!({
         "description": provider.describe(),
+        "address": dav.map(|d| d.url.clone()),
+        "username": dav.and_then(|d| d.user.clone()),
         "ok": ok,
         "error": error,
         "latency_ms": latency,

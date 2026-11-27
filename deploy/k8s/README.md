@@ -76,6 +76,12 @@ Agent 用网址当 `client_id` 时（Claude Code 就是），服务端要能连�
 
 节点的 DNS 是 fake-IP 代理（sing-box、Clash 这类，外网域名都解析成 198.18.x.x；CoreDNS 转发给节点，所以 Pod 里也一样）时，服务端看不出说明文档真正在哪，不会去取，日志里会提示。这时在 `20-deployment.yaml` 里打开 `NEKORISU_DNS_OVER_HTTPS`（例如 `https://1.1.1.1/dns-query` 或 `https://223.5.5.5/dns-query`，主机必须写 IP），服务端就通过 DNS over HTTPS 解析这些域名。
 
+## 6. 检查
+
+打开 `https://nekorisu.example.com/connect`（不用登录）。上面列着这台服务端开了什么、还缺哪些设置；“还差什么”一节没有了，就都配齐了。
+这一页也是给电脑和 Agent 的连接说明：把地址发给 Agent，它照着就能接。存储地址和用户名默认不在上面，Agent 登录 MCP 后用 `setup_info` 拿。
+不想公开这一页，在 `20-deployment.yaml` 里设 `NEKORISU_CONNECT_PAGE=false`。
+
 ## 来源地址
 
 panel 的登录、设置码、MCP 授权页上的密码和 OAuth 注册都按来源地址限速。Pod 看到的对端是 ingress-nginx，所以 `NEKORISU_TRUSTED_PROXIES` 要包含 ingress-nginx 控制器 Pod 的网段（样例是 k3s 默认的 `10.42.0.0/16`，换成你集群的）：对端在这些网段里，服务端才相信它给的 `X-Real-IP`、`X-Forwarded-For`。网段里的其他 Pod 也能自称任何来源，在意的话写窄一些。不设的话，所有请求都算 ingress 一个来源，一个人输错几次密码就把所有人挡在外面一分钟。

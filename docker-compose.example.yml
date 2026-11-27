@@ -23,6 +23,14 @@ services:
       # MCP is on only when this is set: agents sign in with OAuth against it
       # (`claude mcp login` / `codex mcp login`), there is no MCP token.
       NEKORISU_PUBLIC_URL: https://nekorisu.example.com
+      # Where devices reach the device protocol (port 7070 above), when that is not
+      # NEKORISU_PUBLIC_URL. It goes into the connect command on /connect and the panel.
+      # NEKORISU_DEVICE_URL: https://nekorisu.example.com:7070
+      # /connect and /.well-known/nekorisu: public notes on how to connect a device and an
+      # agent, and which settings are still missing. Nothing secret is on them; the storage
+      # address and user name only with the second switch (for a server on a private network).
+      # NEKORISU_CONNECT_PAGE: "true"
+      # NEKORISU_CONNECT_SHOW_STORAGE: "false"
       # Set to true when the panel is served over HTTPS.
       NEKORISU_COOKIE_SECURE: "false"
       # Behind a reverse proxy: the addresses its connections come from, as comma-separated ranges

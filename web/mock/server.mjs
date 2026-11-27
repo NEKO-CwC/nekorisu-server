@@ -951,6 +951,8 @@ async function handle(req, res) {
     const range = process.env.MOCK_RANGE;
     return json(res, 200, {
       description: "webdav https://dav.example/nekorisu",
+      address: "https://dav.example/nekorisu",
+      username: "me",
       ok: !down,
       error: down ? "PROPFIND 返回 503" : null,
       latency_ms: down ? null : 42,

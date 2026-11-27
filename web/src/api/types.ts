@@ -261,6 +261,9 @@ export interface ConfigInfo {
 
 export interface StorageInfo {
   description: string;
+  /** What a device fills in with `nekorisu storage add`; null when no storage is set. */
+  address: string | null;
+  username: string | null;
   ok: boolean;
   error: string | null;
   latency_ms: number | null;

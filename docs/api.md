@@ -5,7 +5,7 @@
 ## 约定
 
 - 路径都在 `/api` 下，JSON，字段名 `snake_case`，时间都是毫秒时间戳（字段名以 `_ms` 结尾），拿不到的值是 `null`。
-- 认证：`nk_session` cookie（`HttpOnly`、`SameSite=Strict`）。没登录返回 `401`；公开的只有 `/api/auth/state`、`/api/auth/setup`、`/api/auth/login`、`/healthz`。`/mcp` 用 OAuth 的访问令牌，见最后的 [MCP](#mcp) 一节。
+- 认证：`nk_session` cookie（`HttpOnly`、`SameSite=Strict`）。没登录返回 `401`；公开的只有 `/api/auth/state`、`/api/auth/setup`、`/api/auth/login`、`/healthz`，和 `/api` 以外的连接说明（`/connect`、`/.well-known/nekorisu`，见 [连接说明](#连接说明)）。`/mcp` 用 OAuth 的访问令牌，见最后的 [MCP](#mcp) 一节。
 - 错误：HTTP 状态码加 `{"error": {"code": "...", "message": "..."}}`。`code` 是固定的短词，前端按它分支；`message` 给人看。
 - 会话的写法：`<agent>:<会话ID>`，`agent` 是 `claude-code` 或 `codex`。
 - 列表都是 `{"items": [...]}`，有分页的再加 `total`。
@@ -219,6 +219,8 @@
 ```json
 {
   "description": "webdav https://dav.example/nekorisu",
+  "address": "https://dav.example",
+  "username": "me",
   "ok": true,
   "error": null,
   "latency_ms": 42,
@@ -226,7 +228,7 @@
   "layout": { "found": true, "entries": ["devices", "logs", "sessions", "digests"] }
 }
 ```
-`range_read` 是 `null` 表示还没测过；`false` 表示服务器不认 `Range`，按行读会退化成整份下载。
+`address`、`username` 是电脑上 `nekorisu storage add` 要填的（和服务端读的是同一个），没设存储时是 `null`；密码不返回。`range_read` 是 `null` 表示还没测过；`false` 表示服务器不认 `Range`，按行读会退化成整份下载。
 
 ## 活动
 
@@ -269,9 +271,40 @@
 
 `POST /api/oauth/apps/{id}/revoke`：`204`，它的访问令牌和刷新令牌立刻失效；没有这一条 `404 app_not_found`。
 
+## 连接说明
+
+不用登录，写给要把电脑接到这台服务端的人和 Agent：这台服务端开了什么、还缺什么设置、MCP 和 `nekorisu source add` 的命令、术语解释。不含密码、令牌、私钥；存储地址和用户名默认不在上面（登录后用 MCP 的 `setup_info` 或 `GET /api/storage` 拿）。`NEKORISU_CONNECT_PAGE=false` 时两个路径都返回 `404`。不读存储，所以每次请求都很便宜。
+
+- `GET /connect`：默认 Markdown（`text/markdown`），给 `curl` 和 Agent 读；`Accept` 里有 `text/html` 时（浏览器）给一个朴素的网页。`?format=md|html|json` 可以直接指定。
+- `GET /.well-known/nekorisu`：同样的内容，JSON：
+
+```json
+{
+  "service": "nekorisu-server", "version": "0.1.0", "commit": "abc1234",
+  "address": "https://nekorisu.example.com",
+  "notes": { "markdown": "https://nekorisu.example.com/connect", "json": "https://nekorisu.example.com/.well-known/nekorisu" },
+  "panel": { "url": "https://nekorisu.example.com", "ready": true },
+  "mcp": { "on": true, "url": "https://nekorisu.example.com/mcp", "sign_in": "...",
+           "commands": { "claude-code": ["claude mcp add ...", "claude mcp login nekorisu-server"], "codex": ["..."] },
+           "setup_tool": "setup_info" },
+  "device": { "on": true, "url": "https://nekorisu.example.com", "protocol": "nekorisu.cloud.v1",
+              "key_id": "0123456789abcdef", "public_key": "base64...",
+              "commands": ["nekorisu source add home https://nekorisu.example.com --key base64...", "nekorisu source login"],
+              "token": "...", "client_min_version": "0.2.0" },
+  "storage": { "configured": true, "kind": "webdav", "shown": false, "address": null, "username": null, "note": "..." },
+  "client": { "min_version": "0.2.0", "manual": "https://raw.githubusercontent.com/NEKO-CwC/nekorisu/main/docs/agent-install.md" },
+  "missing": [ { "setting": "NEKORISU_DEVICE_TOKEN", "effect": "...", "fix": "..." } ],
+  "glossary": [ { "term": "存储", "meaning": "..." } ]
+}
+```
+- `mcp.on` 为 `false` 时只有 `why`；`device.url` 是 `NEKORISU_DEVICE_URL`，没设就是 `NEKORISU_PUBLIC_URL`，都没设时 `device` 只有 `on: false` 和 `why`。`device.on` 还要求设了设备令牌。
+- `panel.ready` 是有没有设管理员密码，查不到是 `null`。
+- `storage.shown` 是 `NEKORISU_CONNECT_SHOW_STORAGE`：为 `true` 时 `address`、`username` 才有值。
+- `missing` 列出部署时漏掉的设置：管理员密码、`NEKORISU_PUBLIC_URL`、`NEKORISU_WEBDAV_URL`、`NEKORISU_DEVICE_TOKEN`。
+
 ## MCP
 
-`POST /mcp`：Streamable HTTP，JSON-RPC 2.0，只有 `initialize`、`ping`、`tools/list`、`tools/call`。工具见 `tools/list`。没设 `NEKORISU_PUBLIC_URL` 时 MCP 关着，下面的路径都返回 `404`。
+`POST /mcp`：Streamable HTTP，JSON-RPC 2.0，只有 `initialize`、`ping`、`tools/list`、`tools/call`。工具见 `tools/list`；其中 `setup_info` 返回和[连接说明](#连接说明)一样的 JSON，外加存储地址和用户名（不含密码），给 Agent 在电脑上配存储时用。没设 `NEKORISU_PUBLIC_URL` 时 MCP 关着，下面的路径都返回 `404`。
 
 **认证**是 OAuth 2.1，照 MCP 的授权规范：`Authorization: Bearer <访问令牌>`，令牌只能是这台服务端为 `<公网地址>/mcp` 签发的。没有令牌或令牌不对（过期、撤销、发给别的地址的）返回 `401`：
 ```
@@ -308,4 +341,4 @@ codex mcp login nekorisu-server
 ## 其他
 
 - `GET /healthz`：`200 ok`，不认证。
-- 其他路径：`/api` 以外的都返回前端的 `index.html`（单页应用的路由）。
+- 其他路径：`/api` 以外、上面没列的，都返回前端的 `index.html`（单页应用的路由）。

@@ -290,7 +290,8 @@ export const zhCN = {
     signing: "签名公钥和连接命令",
     publicKey: "公钥（base64）",
     connectCommand: "连接命令（在设备上运行）",
-    connectHint: "在每台要接入的设备上运行这条命令，设备会记下这个来源和它的公钥。",
+    connectHint:
+      "在每台要接入的设备上运行这条命令，设备会记下这个来源和它的公钥。不用登录也能看的连接说明在 /connect，给 Agent 看那一页就行。",
     requests: "强制覆盖和放行请求",
     noRequests: "没有请求。",
     colKind: "种类",
@@ -318,6 +319,12 @@ export const zhCN = {
   storage: {
     title: "存储",
     description: "描述",
+    forDevices: "给电脑填的地址和用户名",
+    forDevicesHint:
+      "在每台电脑上用同一个地址和用户名：nekorisu storage add <名字> --url <地址> --username <用户名>。密码在那台电脑的终端里输入，这里不显示。",
+    address: "地址",
+    username: "用户名",
+    notSet: "没设",
     status: "状态",
     ok: "正常",
     error: "出错",

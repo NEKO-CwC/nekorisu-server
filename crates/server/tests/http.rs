@@ -1135,7 +1135,14 @@ async fn sign_in_end_to_end_then_tools() {
         .collect();
     assert_eq!(
         names,
-        ["list_sessions", "get_session", "read_lines", "list_devices", "export"]
+        [
+            "list_sessions",
+            "get_session",
+            "read_lines",
+            "list_devices",
+            "setup_info",
+            "export"
+        ]
     );
 
     // A notification gets no reply body; an unknown method an error.

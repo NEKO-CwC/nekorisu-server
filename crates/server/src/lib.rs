@@ -4,6 +4,7 @@
 pub mod api;
 pub mod auth;
 pub mod client_ip;
+pub mod connect;
 pub mod db;
 pub mod error;
 pub mod limit;
@@ -49,6 +50,8 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .nest("/api", open.merge(protected).fallback(api::api_not_found))
         .route("/mcp", post(mcp::handle))
+        .route("/connect", get(connect::page))
+        .route("/.well-known/nekorisu", get(connect::document))
         .route("/.well-known/oauth-protected-resource", get(oauth::resource_metadata))
         .route(
             "/.well-known/oauth-protected-resource/mcp",
