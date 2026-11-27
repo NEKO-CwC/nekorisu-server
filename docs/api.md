@@ -1,6 +1,6 @@
 # 管理接口（草案）
 
-> 2026-11-23。panel 用的 HTTP 接口。第一个版本**只读**，只有登录和初始化会写。
+> panel 用的 HTTP 接口。大多只读；会写的只有登录和初始化、撤销应用的授权、路径映射和强制覆盖请求。
 
 ## 约定
 
@@ -174,6 +174,44 @@
 - `current` 是账号版；没发布过是 `null`。`payload` 是签名的那份 JSON，原样的内容。
 - `requests[].kind` 是 `force` 或 `exec`；`exec` 的 `action` 是 `allow` 或 `revoke`，`force` 的是 `null`；`devices` 是这条请求针对的设备，`state` 多一个 `unknown`（设备还没上报过）。
 - `history` 最多 50 条，新的在前。`last_error` 是配置文件出错时的原因，正常是 `null`。
+
+## 路径映射
+
+恢复别的设备上的会话时，工作目录以 `from` 开头的，在设备上当作 `to` 加上剩下的部分。设备自己的 `config.toml` 里也可以写（`[[paths.map]]`），并上报上来。服务端把这些当作文字保存和下发，不当作路径解析。
+
+`GET /api/paths`：
+```json
+{
+  "items": [ { "from": "D:\\work", "to": "/Users/me/work", "devices": ["d1"] } ],
+  "updated_ms": 1794700800000,
+  "published_serial": 9,
+  "in_force": true,
+  "publish_error": null,
+  "devices": [ {
+    "id": "d1", "name": "mac-mini", "reported_ms": 1794700800000, "applied_serial": 9,
+    "local": [ { "from": "D:\\work", "to": "/Users/me/w", "locked": false } ]
+  } ]
+}
+```
+- `items` 是这里编辑的表；`devices` 为空就是给所有设备；`to` 为空表示设备上不要它自己那条同样 `from` 的规则。
+- `in_force`：最新签发的账号版配置里是不是正好这张表。`publish_error` 是配置目录有错、没能发布时的原因。
+- `devices[].local` 是设备最后一次上报的 `[[paths.map]]`；没上报过是 `null`。
+
+`POST /api/paths`，`{"items": [...]}`：整张表替换，马上签发新的一版。
+```json
+{ "published": true, "serial": 11, "error": null }
+```
+- 表不合格（`from` 为空、超过 4096 字节、有控制字符、设备 ID 不对、超过 500 条、同一台设备同一个 `from` 有两条）返回 400，`code` 是 `invalid_path_maps`，什么都不改。
+- 保存了但配置目录有错、没能发布时，`published` 是 `false`，`error` 说明原因；改好配置目录后会一起发布。
+- 同一个 `from`：设备自己的先生效；这里改了，设备就用这里的，直到它自己再改；设备上锁了的（`lock = true`）一直用它自己的。给某几台设备的规则胜过给所有设备的。
+- 公开版配置（`NEKORISU_PUBLIC_CONFIG`）不带路径映射。
+- `GET` 还返回 `force`：在这里发起的强制覆盖请求，`[{ "id": "panel-1a2b3c4d", "device": "d1", "from": "D:\\work", "to": "/Users/me/w2", "created_ms": ..., "state": "pending" }]`。`state` 是设备最后上报的 `pending`、`accepted`、`rejected`，还没上报是 `unknown`。
+
+`POST /api/paths/force`，`{"device": "d1", "from": "D:\\work", "to": "/Users/me/w2"}`：请这台设备把它锁定的这条规则换成 `to`（空就是删掉），马上签发；返回同上，多一个 `id`。设备上的用户运行 `nekorisu source accept <id>` 才生效，接受后这条规则成为设备自己的、不再锁定。检查和 `POST /api/paths` 一样，最多 200 个。
+
+`POST /api/paths/force/{id}/withdraw`：撤回，马上签发。设备已经接受的不会退回。没有这个请求返回 404，`code` 是 `force_not_found`。
+
+`distribution.toml` 里也可以写强制覆盖路径规则：`key = "paths.map"`，`value = { from = "D:\\work", to = "/Users/me/w2" }`。
 
 ## 存储
 

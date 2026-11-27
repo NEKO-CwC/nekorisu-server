@@ -13,7 +13,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 use nekorisu_archive::{Kind, LinesQuery, SessionFilter};
-use nekorisu_cloud::View;
+use nekorisu_cloud::{PanelForce, PathMapDoc, View, check_path_maps};
 use nekorisu_export::{ExportRequest, Format, Scope, display_text, export_stream, select_fields};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -489,6 +489,158 @@ pub async fn config(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "source": { "dir": source.dir, "checked_ms": source.checked_ms, "last_error": source.last_error },
         "device_token_set": s.settings.device_token.is_some(),
     })))
+}
+
+// ---- path maps ----
+
+/// The path maps edited here, whether the newest revision carries them, and
+/// each device's own rules as it last reported them.
+pub async fn path_maps(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    let (items, updated_ms) = s.store.path_maps().await?;
+    let account = s.store.latest(View::Account).await?;
+    let published: Option<Vec<PathMapDoc>> = account.as_ref().map(|rev| {
+        serde_json::from_slice::<Value>(&rev.payload)
+            .ok()
+            .and_then(|v| serde_json::from_value(v["paths"]["map"].clone()).ok())
+            .unwrap_or_default()
+    });
+    let stats = s.archive.devices().await.unwrap_or_default();
+    let states: HashMap<String, nekorisu_cloud::DeviceState> = s.store.device_states().await?.into_iter().collect();
+    let mut ids: Vec<String> = stats.iter().map(|d| d.id.clone()).collect();
+    for id in states.keys() {
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    let devices: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let state = states.get(id);
+            json!({
+                "id": id,
+                "name": stats.iter().find(|d| &d.id == id).and_then(|d| d.name.clone()),
+                "reported_ms": state.map(|st| st.received_ms),
+                "applied_serial": state.map(|st| st.applied_serial),
+                "local": state.map(|st| st.paths.clone()),
+            })
+        })
+        .collect();
+    let source = s.source.read().expect("status lock").clone();
+    let force: Vec<Value> = s
+        .store
+        .panel_force()
+        .await?
+        .into_iter()
+        .map(|f| {
+            let state = states
+                .get(&f.device)
+                .and_then(|st| st.requests.iter().find(|r| r.id == f.id))
+                .map(|r| r.state.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            json!({
+                "id": f.id, "device": f.device, "from": f.from, "to": f.to,
+                "created_ms": f.created_ms, "state": state,
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "items": items,
+        "updated_ms": updated_ms,
+        "published_serial": account.as_ref().map(|r| r.serial),
+        "in_force": published.as_ref() == Some(&items),
+        "publish_error": source.last_error,
+        "devices": devices,
+        "force": force,
+    })))
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Publishes now; says whether it did.
+async fn publish_now(s: &Shared) -> ApiResult<Json<Value>> {
+    let result = s.publisher.check().await;
+    let serial = s.store.latest(View::Account).await?.map(|r| r.serial);
+    Ok(Json(json!({
+        "published": result.is_ok(),
+        "serial": serial,
+        "error": result.err().map(|e| e.to_string()),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ForceBody {
+    device: String,
+    from: String,
+    #[serde(default)]
+    to: String,
+}
+
+/// Asks one device to replace (or, with an empty `to`, drop) a path rule it
+/// locked. The device applies it only when its user accepts it there.
+pub async fn force_path_map(State(s): State<Shared>, Json(body): Json<ForceBody>) -> ApiResult<Json<Value>> {
+    let probe = PathMapDoc {
+        from: body.from.clone(),
+        to: body.to.clone(),
+        devices: vec![body.device.clone()],
+    };
+    check_path_maps(std::slice::from_ref(&probe))
+        .map_err(|e| ApiError::bad_request("invalid_path_maps", e.to_string()))?;
+    let mut all = s.store.panel_force().await?;
+    if all.len() >= 200 {
+        return Err(ApiError::bad_request(
+            "too_many_requests",
+            "withdraw some force requests first",
+        ));
+    }
+    let mut bytes = [0u8; 4];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut bytes);
+    let id = format!("panel-{}", hex::encode(bytes));
+    all.push(PanelForce {
+        id: id.clone(),
+        device: body.device,
+        from: body.from,
+        to: body.to,
+        created_ms: now_ms(),
+    });
+    s.store.set_panel_force(&all, now_ms()).await?;
+    tracing::info!(request = %id, "a force request for a path rule was made in the panel");
+    let mut reply = publish_now(&s).await?;
+    reply.0["id"] = json!(id);
+    Ok(reply)
+}
+
+pub async fn withdraw_force(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let mut all = s.store.panel_force().await?;
+    let before = all.len();
+    all.retain(|f| f.id != id);
+    if all.len() == before {
+        return Err(ApiError::not_found("force_not_found", "no such force request"));
+    }
+    s.store.set_panel_force(&all, now_ms()).await?;
+    tracing::info!(request = %id, "a force request was withdrawn in the panel");
+    publish_now(&s).await
+}
+
+#[derive(Deserialize)]
+pub struct PathMapsBody {
+    items: Vec<PathMapDoc>,
+}
+
+/// Replaces the whole table and publishes it at once.
+pub async fn save_path_maps(State(s): State<Shared>, Json(body): Json<PathMapsBody>) -> ApiResult<Json<Value>> {
+    check_path_maps(&body.items).map_err(|e| ApiError::bad_request("invalid_path_maps", e.to_string()))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    s.store.set_path_maps(&body.items, now).await?;
+    tracing::info!(entries = body.items.len(), "path maps saved in the panel");
+    publish_now(&s).await
 }
 
 // ---- storage ----

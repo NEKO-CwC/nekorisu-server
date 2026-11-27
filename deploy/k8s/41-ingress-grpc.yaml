@@ -1,0 +1,30 @@
+# The device protocol (gRPC) on the same host name as the panel: ingress-nginx
+# sends calls to nekorisu.cloud.v1.Cloud to port 7070 over plain HTTP/2. Devices
+# use the panel's address (`nekorisu source add <name> https://<host> --key ...`).
+# The certificate is the one 40-ingress.yaml has cert-manager issue, so there is
+# no cert-manager annotation here. Change the host to yours (README.md, step 0).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nekorisu-server-grpc
+  namespace: nekorisu
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - nekorisu.example.com
+      secretName: nekorisu-tls
+  rules:
+    - host: nekorisu.example.com
+      http:
+        paths:
+          - path: /nekorisu.cloud.v1.Cloud
+            pathType: Prefix
+            backend:
+              service:
+                name: nekorisu-server
+                port:
+                  number: 7070

@@ -1558,6 +1558,7 @@ dependencies = [
  "tonic-prost-build",
  "tower",
  "uuid",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 
@@ -2946,6 +2947,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
+ "rustls-native-certs",
  "socket2",
  "sync_wrapper",
  "tokio",

@@ -12,7 +12,7 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-    # The device protocol (gRPC, plain HTTP/2). Not published through the ingress yet.
+    # The device protocol (gRPC, plain HTTP/2), published by 41-ingress-grpc.yaml.
     - name: grpc
       port: 7070
       targetPort: grpc

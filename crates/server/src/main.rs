@@ -105,7 +105,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let _ = publisher.check().await; // errors are logged and shown in the panel
     let source = publisher.status();
-    publisher.spawn(Duration::from_secs(30));
+    publisher.clone().spawn(Duration::from_secs(30));
 
     let provider = storage::provider(&settings)?;
     tracing::info!(storage = %provider.describe(), "storage");
@@ -137,6 +137,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         oauth,
         signer,
         source,
+        publisher,
     });
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);

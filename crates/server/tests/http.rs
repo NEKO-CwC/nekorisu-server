@@ -172,6 +172,7 @@ value = "full"
         oauth,
         signer,
         source: publisher.status(),
+        publisher: Arc::new(publisher),
     });
     Fixture {
         app: router(state.clone()),
@@ -496,6 +497,184 @@ async fn devices_config_storage_and_activity() {
     let (status, _, body) = send(&f.app, post_json("/api/refresh", json!({}), Some(&c))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json_of(&body)["sessions"], 2);
+}
+
+#[tokio::test]
+async fn path_maps_are_edited_published_and_shown_with_what_devices_report() {
+    let f = fixture(Some(BASE)).await;
+    assert_eq!(send(&f.app, get("/api/paths", None)).await.0, StatusCode::UNAUTHORIZED);
+    let c = sign_in(&f).await;
+
+    f.state
+        .store
+        .upsert_report(
+            "dev-1",
+            &nekorisu_cloud::DeviceState {
+                received_ms: 5,
+                applied_serial: 2,
+                paths: vec![nekorisu_cloud::LocalPathMap {
+                    from: "D:\\work".into(),
+                    to: "/Users/me/w".into(),
+                    locked: false,
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let (status, _, body) = send(&f.app, get("/api/paths", Some(&c))).await;
+    assert_eq!(status, StatusCode::OK);
+    let v = json_of(&body);
+    assert_eq!(v["items"], json!([]));
+    assert_eq!(v["in_force"], json!(true));
+    let dev1 = v["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == "dev-1")
+        .unwrap();
+    assert_eq!(dev1["local"][0]["from"], "D:\\work");
+    assert_eq!(dev1["local"][0]["locked"], false);
+    assert_eq!(dev1["name"], "mac-mini");
+    let before = v["published_serial"].as_u64().unwrap();
+
+    let table = json!({ "items": [
+        { "from": "D:\\work", "to": "/Users/me/work", "devices": ["dev-1"] },
+        { "from": "/home/me/old", "to": "", "devices": [] },
+    ]});
+    let (status, _, body) = send(&f.app, post_json("/api/paths", table.clone(), Some(&c))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let saved = json_of(&body);
+    assert_eq!(saved["published"], true);
+    assert!(saved["serial"].as_u64().unwrap() > before);
+
+    let v = json_of(&send(&f.app, get("/api/paths", Some(&c))).await.2);
+    assert_eq!(v["items"], table["items"]);
+    assert_eq!(v["in_force"], true);
+    assert!(v["updated_ms"].as_i64().is_some());
+    // The signed config the devices get carries them.
+    let rev = f
+        .state
+        .store
+        .latest(nekorisu_cloud::View::Account)
+        .await
+        .unwrap()
+        .unwrap();
+    let payload: Value = serde_json::from_slice(&rev.payload).unwrap();
+    assert_eq!(payload["paths"]["map"], table["items"]);
+
+    // Refused: same `from` twice for one device; not signed in.
+    let twice = json!({ "items": [
+        { "from": "/a", "to": "/x", "devices": [] },
+        { "from": "/a", "to": "/y", "devices": [] },
+    ]});
+    let (status, _, body) = send(&f.app, post_json("/api/paths", twice, Some(&c))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json_of(&body)["error"]["code"], "invalid_path_maps");
+    assert_eq!(
+        send(&f.app, post_json("/api/paths", table, None)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        json_of(&send(&f.app, get("/api/paths", Some(&c))).await.2)["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // A force request for a rule dev-1 locked: signed in, aimed at dev-1 only.
+    let ask = json!({ "device": "dev-1", "from": "D:\\work", "to": "/forced" });
+    let (status, _, body) = send(&f.app, post_json("/api/paths/force", ask.clone(), Some(&c))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let made = json_of(&body);
+    assert_eq!(made["published"], true);
+    let id = made["id"].as_str().unwrap().to_string();
+    assert!(id.starts_with("panel-"));
+    let rev = f
+        .state
+        .store
+        .latest(nekorisu_cloud::View::Account)
+        .await
+        .unwrap()
+        .unwrap();
+    let payload: Value = serde_json::from_slice(&rev.payload).unwrap();
+    let forced = payload["force"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id.as_str())
+        .unwrap();
+    assert_eq!(forced["devices"], json!(["dev-1"]));
+    assert_eq!(forced["changes"][0]["key"], "paths.map");
+    let value: Value = serde_json::from_str(forced["changes"][0]["value_json"].as_str().unwrap()).unwrap();
+    assert_eq!(value, json!({ "from": "D:\\work", "to": "/forced" }));
+    // The file's force request is still there too.
+    assert!(payload["force"].as_array().unwrap().iter().any(|x| x["id"] == "f-1"));
+
+    let listed = |v: &Value| {
+        v["force"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == id.as_str())
+            .cloned()
+    };
+    let v = json_of(&send(&f.app, get("/api/paths", Some(&c))).await.2);
+    assert_eq!(listed(&v).unwrap()["state"], "unknown");
+    // dev-1 reports it accepted.
+    f.state
+        .store
+        .upsert_report(
+            "dev-1",
+            &nekorisu_cloud::DeviceState {
+                received_ms: 6,
+                requests: vec![nekorisu_cloud::RequestState {
+                    id: id.clone(),
+                    state: "accepted".into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let v = json_of(&send(&f.app, get("/api/paths", Some(&c))).await.2);
+    assert_eq!(listed(&v).unwrap()["state"], "accepted");
+
+    // Refused: no `from`, not signed in. Withdrawn once, then not found.
+    let bad = json!({ "device": "dev-1", "from": "", "to": "/x" });
+    assert_eq!(
+        send(&f.app, post_json("/api/paths/force", bad, Some(&c))).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&f.app, post_json("/api/paths/force", ask, None)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let withdraw = format!("/api/paths/force/{id}/withdraw");
+    assert_eq!(
+        send(&f.app, post_json(&withdraw, json!({}), Some(&c))).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&f.app, post_json(&withdraw, json!({}), Some(&c))).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let rev = f
+        .state
+        .store
+        .latest(nekorisu_cloud::View::Account)
+        .await
+        .unwrap()
+        .unwrap();
+    let payload: Value = serde_json::from_slice(&rev.payload).unwrap();
+    assert!(
+        !payload["force"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == id.as_str())
+    );
 }
 
 #[tokio::test]

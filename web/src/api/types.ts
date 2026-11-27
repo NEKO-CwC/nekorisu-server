@@ -320,3 +320,69 @@ export interface ExportFields {
   formats: ExportFormat[];
   fields: { name: string; description: string }[];
 }
+
+// ---- path maps ----
+
+/** A rule devices get: a working directory that starts with `from` becomes `to` plus the rest. */
+export interface PathMap {
+  from: string;
+  /** Empty: the device drops its own rule with this `from`. */
+  to: string;
+  /** Device IDs; empty = every device. */
+  devices: string[];
+}
+
+/** A `[[paths.map]]` rule written on a device, as it last reported it. */
+export interface LocalPathMap {
+  from: string;
+  to: string;
+  locked: boolean;
+}
+
+export interface PathMapDevice {
+  id: string;
+  name: string | null;
+  /** null: the device has not reported yet */
+  reported_ms: number | null;
+  applied_serial: number | null;
+  local: LocalPathMap[] | null;
+}
+
+export interface PathMaps {
+  items: PathMap[];
+  /** null: never saved */
+  updated_ms: number | null;
+  published_serial: number | null;
+  /** whether the newest signed config carries exactly `items` */
+  in_force: boolean;
+  /** why the config directory could not be published, if it could not */
+  publish_error: string | null;
+  devices: PathMapDevice[];
+  /** force requests made on this page */
+  force: PanelForce[];
+}
+
+/** Asks one device to replace (or, with an empty `to`, drop) a path rule it locked. */
+export interface PanelForce {
+  id: string;
+  device: string;
+  from: string;
+  to: string;
+  created_ms: number;
+  /** what the device last reported; "unknown" before it has */
+  state: "pending" | "accepted" | "rejected" | "unknown";
+}
+
+export interface SavePathMapsResult {
+  published: boolean;
+  serial: number | null;
+  error: string | null;
+  /** set when a force request was made */
+  id?: string;
+}
+
+export interface ForceRequestBody {
+  device: string;
+  from: string;
+  to: string;
+}

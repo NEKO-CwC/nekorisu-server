@@ -7,6 +7,7 @@ const links = [
   { to: "/sessions", label: t.nav.sessions, end: false },
   { to: "/devices", label: t.nav.devices, end: false },
   { to: "/config", label: t.nav.config, end: false },
+  { to: "/paths", label: t.nav.paths, end: false },
   { to: "/storage", label: t.nav.storage, end: false },
   { to: "/activity", label: t.nav.activity, end: false },
   { to: "/export", label: t.nav.export, end: false },

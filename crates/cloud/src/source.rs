@@ -9,8 +9,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::doc::{
-    ACTION_ALLOW, ACTION_REVOKE, ChangeDoc, ConfigDoc, DigestDoc, ExecDoc, ForceDoc, LocalDoc, ResourceRefDoc, SCHEMA,
-    UpdateDoc,
+    ACTION_ALLOW, ACTION_REVOKE, ChangeDoc, ConfigDoc, DigestDoc, ExecDoc, ForceDoc, LocalDoc, PathMapDoc, PathsDoc,
+    ResourceRefDoc, SCHEMA, UpdateDoc,
 };
 use crate::{Error, Result};
 
@@ -29,7 +29,11 @@ const OVERRIDABLE: &[&str] = &[
     "digest",
     "local",
     "kind_rules",
+    "paths",
 ];
+
+/// The key a forced path rule names; its value is one rule, `{ from, to }`.
+pub const PATHS_KEY: &str = "paths.map";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -140,6 +144,37 @@ impl Distribution {
         }
     }
 
+    /// Adds what was edited in the panel: path maps, and force requests for
+    /// path rules devices locked. They count towards `source_hash`, so saving
+    /// them publishes a new revision; empty ones leave the hash as it was. A
+    /// force request whose ID the file uses too is a mistake, like one in the file.
+    pub fn with_panel(mut self, map: Vec<PathMapDoc>, force: Vec<ForceDoc>) -> Result<Distribution> {
+        for f in &force {
+            if self.doc.force.iter().any(|x| x.id == f.id) || self.doc.requests.iter().any(|x| x.id == f.id) {
+                return Err(bad(format!(
+                    "the panel's force request {:?} has an ID this file uses too",
+                    f.id
+                )));
+            }
+        }
+        if !map.is_empty() || !force.is_empty() {
+            let mut hash = Sha256::new();
+            hash.update(self.source_hash.as_bytes());
+            if !map.is_empty() {
+                hash.update(b"\0paths.map\0");
+                hash.update(serde_json::to_vec(&map).expect("strings"));
+            }
+            if !force.is_empty() {
+                hash.update(b"\0force\0");
+                hash.update(serde_json::to_vec(&force).expect("strings"));
+            }
+            self.source_hash = hex::encode(hash.finalize());
+        }
+        self.doc.paths = PathsDoc { map };
+        self.doc.force.extend(force);
+        Ok(self)
+    }
+
     /// `None` when the directory has no `distribution.toml`: nothing to
     /// distribute is not a mistake.
     pub fn load(dir: &Path) -> Result<Option<Distribution>> {
@@ -238,6 +273,9 @@ impl Distribution {
             for c in &f.changes {
                 check_key(&c.key)?;
                 let json = toml_to_json(&c.value).map_err(|e| bad(format!("force {:?} key {}: {e}", f.id, c.key)))?;
+                if c.key == PATHS_KEY {
+                    check_forced_rule(&json).map_err(|e| bad(format!("force {:?} key {}: {e}", f.id, c.key)))?;
+                }
                 changes.push(ChangeDoc {
                     key: c.key.clone(),
                     value_json: json.to_string(),
@@ -288,6 +326,7 @@ impl Distribution {
             force,
             requests,
             kind_rules,
+            paths: PathsDoc::default(),
         };
         Ok(Distribution {
             doc,
@@ -376,6 +415,23 @@ fn check_key(key: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// A forced path rule: `{ from = "...", to = "..." }`; an empty `to` drops the
+/// device's rule.
+pub fn check_forced_rule(value: &serde_json::Value) -> std::result::Result<(), String> {
+    let ok = value.as_object().is_some_and(|o| {
+        o.len() == 2
+            && o.get("from")
+                .and_then(|f| f.as_str())
+                .is_some_and(|f| !f.trim().is_empty())
+            && o.get("to").is_some_and(|t| t.is_string())
+    });
+    if ok {
+        Ok(())
+    } else {
+        Err("a forced path rule is { from = \"...\", to = \"...\" }".to_string())
+    }
 }
 
 fn toml_to_json(v: &toml::Value) -> std::result::Result<serde_json::Value, String> {
@@ -489,6 +545,57 @@ action = "allow"
         assert_eq!(a.source_hash, same.source_hash);
         assert_ne!(a.source_hash, other_resource.source_hash);
         assert_ne!(a.source_hash, other_file.source_hash);
+    }
+
+    #[test]
+    fn panel_edits_join_the_document_and_its_hash() {
+        let d = || {
+            load(&dir_with(GOOD, &[("a.json", "1"), ("b.sh", "x")]))
+                .unwrap()
+                .unwrap()
+        };
+        let none = d().with_panel(Vec::new(), Vec::new()).unwrap();
+        assert_eq!(none.source_hash, d().source_hash, "nothing edited changes nothing");
+        let map = |to: &str| PathMapDoc {
+            from: "D:\\work".into(),
+            to: to.into(),
+            devices: Vec::new(),
+        };
+        let force = |id: &str| ForceDoc {
+            id: id.into(),
+            changes: vec![ChangeDoc {
+                key: PATHS_KEY.into(),
+                value_json: r#"{"from":"D:\\work","to":"/x"}"#.into(),
+            }],
+            devices: vec!["dev-1".into()],
+        };
+        let one = d().with_panel(vec![map("/a")], Vec::new()).unwrap();
+        let other = d().with_panel(vec![map("/b")], Vec::new()).unwrap();
+        assert_eq!(one.doc.paths.map, vec![map("/a")]);
+        assert_ne!(one.source_hash, d().source_hash);
+        assert_ne!(one.source_hash, other.source_hash);
+        let forced = d().with_panel(vec![map("/a")], vec![force("panel-1")]).unwrap();
+        assert_ne!(forced.source_hash, one.source_hash);
+        assert_eq!(forced.doc.force.len(), 2, "the file's and the panel's");
+        // The file already uses f-1 and r-1.
+        assert!(d().with_panel(Vec::new(), vec![force("f-1")]).is_err());
+        assert!(d().with_panel(Vec::new(), vec![force("r-1")]).is_err());
+    }
+
+    #[test]
+    fn forced_path_rules_are_checked() {
+        let force =
+            |value: &str| format!("[[force]]\nid = \"f\"\n[[force.changes]]\nkey = \"paths.map\"\nvalue = {value}\n");
+        assert!(load(&dir_with(&force(r#"{ from = 'D:\work', to = "/x" }"#), &[])).is_ok());
+        assert!(load(&dir_with(&force(r#"{ from = "/a", to = "" }"#), &[])).is_ok());
+        for bad in [
+            r#""/x""#,
+            r#"{ from = "", to = "/x" }"#,
+            r#"{ from = "/a" }"#,
+            r#"{ from = "/a", to = "/x", lock = true }"#,
+        ] {
+            assert!(err_of(&force(bad)).contains("forced path rule"), "{bad}");
+        }
     }
 
     #[test]

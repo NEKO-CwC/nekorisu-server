@@ -10,7 +10,7 @@ cp -r deploy/k8s deploy/k8s.local
 ```
 
 `deploy/k8s.local/` 已被 `.gitignore` 忽略，不会进仓库。
-在 `20-deployment.yaml` 里改 `NEKORISU_WEBDAV_URL`、`NEKORISU_WEBDAV_USER`、`NEKORISU_PUBLIC_URL`、`NEKORISU_TRUSTED_PROXIES`（见下面的“来源地址”），在 `40-ingress.yaml` 里改域名和 ClusterIssuer。
+在 `20-deployment.yaml` 里改 `NEKORISU_WEBDAV_URL`、`NEKORISU_WEBDAV_USER`、`NEKORISU_PUBLIC_URL`、`NEKORISU_TRUSTED_PROXIES`（见下面的“来源地址”），在 `40-ingress.yaml` 里改域名和 ClusterIssuer，在 `41-ingress-grpc.yaml` 里改域名。
 下面的命令都对着 `deploy/k8s.local/` 运行。
 
 ## 1. 构建镜像并导入 k3s
@@ -43,7 +43,7 @@ printf %s "<WebDAV 密码>" | kubectl -n nekorisu create secret generic nekorisu
 ## 3. 部署
 
 ```bash
-kubectl apply -f deploy/k8s.local/10-pvc.yaml -f deploy/k8s.local/20-deployment.yaml -f deploy/k8s.local/30-service.yaml -f deploy/k8s.local/40-ingress.yaml
+kubectl apply -f deploy/k8s.local/10-pvc.yaml -f deploy/k8s.local/20-deployment.yaml -f deploy/k8s.local/30-service.yaml -f deploy/k8s.local/40-ingress.yaml -f deploy/k8s.local/41-ingress-grpc.yaml
 kubectl -n nekorisu rollout status deploy/nekorisu-server
 kubectl -n nekorisu get certificate,ingress
 ```
@@ -88,5 +88,5 @@ ingress-nginx 自己看到的也得是客户端的真实地址：比如它的 Se
 
 ## 说明
 
-- 设备协议（gRPC，7070）没有经过 ingress 对外。
+- 设备协议（gRPC，7070）由 `41-ingress-grpc.yaml` 经 ingress 对外，和 panel 同一个主机名，路径 `/nekorisu.cloud.v1.Cloud`。设备连的就是 panel 的地址：配置页上给出 `nekorisu source add` 的完整命令，设备上再运行 `nekorisu source login`，输入 `device-token`。ingress 前面还有一层代理的话，它要原样透传 TLS（或者自己支持 HTTP/2），gRPC 才过得去。
 - `/config` 是空的时候，设备拿到的是全默认的配置。

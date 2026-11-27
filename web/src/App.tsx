@@ -9,6 +9,7 @@ import { ExportPage } from "./pages/ExportPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PathsPage } from "./pages/PathsPage";
 import { SessionDetailPage } from "./pages/SessionDetailPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { SetupPage } from "./pages/SetupPage";
@@ -26,6 +27,7 @@ export function App() {
           <Route path="sessions/:agent/:id" element={<SessionDetailPage />} />
           <Route path="devices" element={<DevicesPage />} />
           <Route path="config" element={<ConfigPage />} />
+          <Route path="paths" element={<PathsPage />} />
           <Route path="storage" element={<StoragePage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="apps" element={<AppsPage />} />

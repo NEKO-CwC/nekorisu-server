@@ -358,6 +358,35 @@ const CONFIG_SERIAL = 7;
 const PUBLIC_KEY = randomBytes(32).toString("base64");
 const KEY_ID = sha("mock-key").slice(0, 16);
 
+let pathMaps = [{ from: "D:\\work", to: "/Users/me/work", devices: ["d1"] }];
+let pathMapsUpdated = NOW - 2 * DAY;
+let pathMapsSerial = 7;
+let panelForce = [
+  { id: "panel-1a2b3c4d", device: "d2", from: "/home/me/src", to: "D:\\src", created_ms: NOW - HOUR, state: "pending" },
+];
+
+function buildPaths() {
+  const local = {
+    d1: [{ from: "D:\\work", to: "/Users/me/w", locked: false }],
+    d2: [{ from: "/home/me/src", to: "C:\\src", locked: true }],
+  };
+  return {
+    items: pathMaps,
+    updated_ms: pathMapsUpdated,
+    published_serial: pathMapsSerial,
+    in_force: true,
+    publish_error: null,
+    devices: DEVICES.map((d) => ({
+      id: d.id,
+      name: d.name,
+      reported_ms: d.id === "d3" ? null : NOW - HOUR,
+      applied_serial: d.id === "d3" ? null : pathMapsSerial,
+      local: d.id === "d3" ? null : (local[d.id] ?? []),
+    })),
+    force: panelForce,
+  };
+}
+
 function buildConfig() {
   const resources = [
     { name: "excerpt-default", version: "2026-11-23.1", sha256: sha("excerpt-default"), executable: false, size: 1204 },
@@ -887,6 +916,36 @@ async function handle(req, res) {
 
   if (path === "/api/devices" && method === "GET") return json(res, 200, { items: buildDevices() });
   if (path === "/api/config" && method === "GET") return json(res, 200, buildConfig());
+  if (path === "/api/paths" && method === "GET") return json(res, 200, buildPaths());
+  if (path === "/api/paths" && method === "POST") {
+    const body = await readBody(req);
+    const items = body && Array.isArray(body.items) ? body.items : null;
+    if (!items || items.some((m) => typeof m.from !== "string" || !m.from.trim())) {
+      return apiError(res, 400, "invalid_path_maps", "path map 1: `from` is empty");
+    }
+    pathMaps = items.map((m) => ({ from: m.from, to: m.to ?? "", devices: m.devices ?? [] }));
+    pathMapsUpdated = Date.now();
+    pathMapsSerial += 2;
+    return json(res, 200, { published: true, serial: pathMapsSerial, error: null });
+  }
+  if (path === "/api/paths/force" && method === "POST") {
+    const body = await readBody(req);
+    if (!body || typeof body.from !== "string" || !body.from.trim() || typeof body.device !== "string") {
+      return apiError(res, 400, "invalid_path_maps", "path map 1: `from` is empty");
+    }
+    const id = `panel-${Math.random().toString(16).slice(2, 10)}`;
+    panelForce.push({ id, device: body.device, from: body.from, to: body.to ?? "", created_ms: Date.now(), state: "unknown" });
+    pathMapsSerial += 2;
+    return json(res, 200, { published: true, serial: pathMapsSerial, error: null, id });
+  }
+  const withdrawMatch = path.match(/^\/api\/paths\/force\/([^/]+)\/withdraw$/);
+  if (withdrawMatch && method === "POST") {
+    const id = decodeURIComponent(withdrawMatch[1]);
+    if (!panelForce.some((f) => f.id === id)) return apiError(res, 404, "force_not_found", "no such force request");
+    panelForce = panelForce.filter((f) => f.id !== id);
+    pathMapsSerial += 2;
+    return json(res, 200, { published: true, serial: pathMapsSerial, error: null });
+  }
   if (path === "/api/storage" && method === "GET") {
     const down = process.env.MOCK_STORAGE_ERROR === "1";
     const range = process.env.MOCK_RANGE;

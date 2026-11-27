@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use nekorisu_archive::Archive;
-use nekorisu_cloud::{Signer, SourceStatus, Store};
+use nekorisu_cloud::{Publisher, Signer, SourceStatus, Store};
 
 use crate::auth::Auth;
 use crate::oauth::Oauth;
@@ -15,6 +15,8 @@ pub struct AppState {
     pub oauth: Oauth,
     pub signer: Arc<dyn Signer>,
     pub source: Arc<RwLock<SourceStatus>>,
+    /// Publishes right away when the panel saves a change.
+    pub publisher: Arc<Publisher>,
 }
 
 pub type Shared = Arc<AppState>;

@@ -19,12 +19,16 @@ pub struct SourceStatus {
     pub last_error: Option<String>,
 }
 
-/// Watches the config directory and publishes a new revision when it changes.
+/// Watches the config directory and publishes a new revision when it, or the
+/// path maps edited in the panel, change.
 pub struct Publisher {
     dir: PathBuf,
     store: Store,
     signer: Arc<dyn Signer>,
     status: Arc<RwLock<SourceStatus>>,
+    /// One check at a time: the timer and a panel edit could otherwise both
+    /// publish the same change.
+    checking: tokio::sync::Mutex<()>,
 }
 
 fn now_ms() -> i64 {
@@ -45,6 +49,7 @@ impl Publisher {
             store,
             signer,
             status: Arc::new(RwLock::new(status)),
+            checking: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -52,17 +57,24 @@ impl Publisher {
         self.status.clone()
     }
 
-    /// Reads the directory; publishes if it, or the signing key, is not what
-    /// the newest revision was made from. `true` if it published.
+    /// Reads the directory and the edited path maps; publishes if they, or the
+    /// signing key, are not what the newest revision was made from. `true` if
+    /// it published.
     pub async fn check(&self) -> Result<bool> {
+        let _one_at_a_time = self.checking.lock().await;
+        let maps = self.store.path_maps().await?.0;
+        let force: Vec<_> = self.store.panel_force().await?.iter().map(|f| f.to_doc()).collect();
         let dir = self.dir.clone();
         let loaded = tokio::task::spawn_blocking(move || Distribution::load(&dir))
             .await
-            .map_err(|e| Error::config(format!("config reader stopped: {e}")))?;
-        match loaded {
-            Ok(found) => {
+            .map_err(|e| Error::config(format!("config reader stopped: {e}")))?
+            .and_then(|found| {
                 let configured = found.is_some();
-                let dist = found.unwrap_or_else(Distribution::empty);
+                let dist = found.unwrap_or_else(Distribution::empty).with_panel(maps, force)?;
+                Ok((configured, dist))
+            });
+        match loaded {
+            Ok((configured, dist)) => {
                 let wanted = format!("{}:{}", dist.source_hash, self.signer.key_id());
                 let current = self.store.newest().await?.map(|r| r.source_hash);
                 let published = if current.as_deref() == Some(wanted.as_str()) {

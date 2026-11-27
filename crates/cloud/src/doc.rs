@@ -23,6 +23,27 @@ pub struct ConfigDoc {
     pub requests: Vec<ExecDoc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind_rules: Option<ResourceRefDoc>,
+    #[serde(default)]
+    pub paths: PathsDoc,
+}
+
+/// Where sessions from other devices go when restored. Edited in the panel.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathsDoc {
+    pub map: Vec<PathMapDoc>,
+}
+
+/// A working directory that starts with `from` is taken to be `to` plus the
+/// rest. The server keeps these as plain text and never reads them as paths.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathMapDoc {
+    pub from: String,
+    /// Empty: the device drops its own rule with this `from`.
+    #[serde(default)]
+    pub to: String,
+    /// Device IDs; empty = every device.
+    #[serde(default)]
+    pub devices: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -75,11 +96,13 @@ pub struct ExecDoc {
 
 impl ConfigDoc {
     /// What an unauthenticated device gets: the defaults, with nothing aimed at
-    /// particular devices.
+    /// particular devices. Path maps are someone's own folders, so they stay
+    /// out too.
     pub fn public_view(&self) -> ConfigDoc {
         ConfigDoc {
             force: Vec::new(),
             requests: Vec::new(),
+            paths: PathsDoc::default(),
             ..self.clone()
         }
     }
@@ -150,6 +173,13 @@ mod tests {
                 devices: vec![],
             }],
             kind_rules: Some(r()),
+            paths: PathsDoc {
+                map: vec![PathMapDoc {
+                    from: "D:\\work".into(),
+                    to: "/Users/me/work".into(),
+                    devices: vec!["d".into()],
+                }],
+            },
         }
     }
 
@@ -157,7 +187,16 @@ mod tests {
     fn public_view_drops_what_is_aimed_at_devices() {
         let public = full().public_view();
         assert!(public.force.is_empty() && public.requests.is_empty());
+        assert!(public.paths.map.is_empty());
         assert_eq!(public.digest, full().digest);
+    }
+
+    #[test]
+    fn an_older_payload_without_paths_still_reads() {
+        let mut v = serde_json::to_value(full()).unwrap();
+        v.as_object_mut().unwrap().remove("paths");
+        let doc: ConfigDoc = serde_json::from_value(v).unwrap();
+        assert!(doc.paths.map.is_empty());
     }
 
     #[test]
@@ -193,6 +232,8 @@ mod tests {
         assert_eq!(keys(&v["force"][0]["changes"][0]), fields("ForceChange"));
         assert_eq!(keys(&v["requests"][0]), fields("ExecRequest"));
         assert_eq!(keys(&v["kind_rules"]), fields("ResourceRef"));
+        assert_eq!(keys(&v["paths"]), fields("PathsConfig"));
+        assert_eq!(keys(&v["paths"]["map"][0]), fields("PathMap"));
 
         // The action names are the enum's.
         let names: BTreeSet<String> = file

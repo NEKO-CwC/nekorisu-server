@@ -10,10 +10,10 @@ use nekorisu::sign::{CONTEXT_CONFIG, Envelope, PublicKey};
 use nekorisu_cloud::proto::cloud_client::CloudClient;
 use nekorisu_cloud::proto::get_config_response::Result as ConfigResult;
 use nekorisu_cloud::proto::{
-    ConfigFailure, ConfigFailureReason, GetConfigRequest, GetResourceRequest, LocalValue, ReportStateRequest,
-    RequestState, RequestStatus,
+    ConfigFailure, ConfigFailureReason, GetConfigRequest, GetResourceRequest, LocalPathMap, LocalValue,
+    ReportStateRequest, RequestState, RequestStatus,
 };
-use nekorisu_cloud::{CloudService, ConfigDoc, FileSigner, Publisher, ServiceOptions, Signer, Store, View};
+use nekorisu_cloud::{CloudService, ConfigDoc, FileSigner, PathMapDoc, Publisher, ServiceOptions, Signer, Store, View};
 use sqlx::sqlite::SqlitePoolOptions;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
@@ -428,6 +428,11 @@ async fn devices_report_their_state() {
             serial: 4,
             reason: ConfigFailureReason::ResourceHashMismatch as i32,
         }),
+        paths: vec![LocalPathMap {
+            from: "D:\\work".into(),
+            to: "/Users/me/work".into(),
+            locked: true,
+        }],
     };
     client
         .report_state(request(report, Some(TOKEN), Some("dev-1")))
@@ -445,6 +450,14 @@ async fn devices_report_their_state() {
     assert_eq!(state.requests[0].state, "pending");
     assert_eq!(state.requests[1].state, "accepted");
     assert_eq!(state.last_failure.as_ref().unwrap().reason, "resource_hash_mismatch");
+    assert_eq!(
+        state.paths,
+        vec![nekorisu_cloud::LocalPathMap {
+            from: "D:\\work".into(),
+            to: "/Users/me/work".into(),
+            locked: true,
+        }]
+    );
 
     // A second report replaces the first.
     client
@@ -462,6 +475,82 @@ async fn devices_report_their_state() {
     assert_eq!(states.len(), 1);
     assert_eq!(states[0].1.applied_serial, 4);
     assert!(states[0].1.local_values.is_empty());
+    assert!(states[0].1.paths.is_empty());
+}
+
+#[tokio::test]
+async fn edited_path_maps_are_signed_into_the_account_view_only() {
+    let h = harness().await;
+    assert!(h.publisher.check().await.unwrap());
+    let before = h.store.latest(View::Account).await.unwrap().unwrap();
+    assert!(!h.publisher.check().await.unwrap(), "nothing changed");
+
+    let maps = vec![
+        PathMapDoc {
+            from: "D:\\work".into(),
+            to: "/Users/me/work".into(),
+            devices: vec!["dev-1".into()],
+        },
+        PathMapDoc {
+            from: "/home/me/old".into(),
+            to: String::new(),
+            devices: Vec::new(),
+        },
+    ];
+    h.store.set_path_maps(&maps, 1).await.unwrap();
+    assert!(h.publisher.check().await.unwrap(), "an edit publishes");
+    assert!(!h.publisher.check().await.unwrap(), "once");
+
+    let mut client = start(&h.store, true).await;
+    let config = |token: Option<&'static str>| {
+        let mut client = client.clone();
+        async move {
+            let reply = client
+                .get_config(request(GetConfigRequest::default(), token, Some("dev-1")))
+                .await
+                .unwrap()
+                .into_inner();
+            match reply.result.unwrap() {
+                ConfigResult::Config(c) => c,
+                ConfigResult::NotModified(_) => panic!("asked without an etag"),
+            }
+        }
+    };
+    let account = verify(&h.signer, &config(Some(TOKEN)).await);
+    assert!(account.serial > before.serial);
+    assert_eq!(account.paths.map, maps);
+    let public = verify(&h.signer, &config(None).await);
+    assert!(public.paths.map.is_empty(), "path maps are not public");
+
+    // Clearing the table publishes again, back to no maps.
+    h.store.set_path_maps(&[], 2).await.unwrap();
+    assert!(h.publisher.check().await.unwrap());
+    assert!(verify(&h.signer, &config(Some(TOKEN)).await).paths.map.is_empty());
+
+    // A report bounds what it carries.
+    let too_long = ReportStateRequest {
+        paths: vec![LocalPathMap {
+            from: "x".repeat(nekorisu_cloud::MAX_PATH_TEXT + 1),
+            to: "/y".into(),
+            locked: false,
+        }],
+        ..Default::default()
+    };
+    let refused = client
+        .report_state(request(too_long, Some(TOKEN), Some("dev-1")))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::InvalidArgument);
+    let no_from = ReportStateRequest {
+        paths: vec![LocalPathMap::default()],
+        ..Default::default()
+    };
+    assert!(
+        client
+            .report_state(request(no_from, Some(TOKEN), Some("dev-1")))
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

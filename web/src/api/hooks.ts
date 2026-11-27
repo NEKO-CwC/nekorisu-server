@@ -13,10 +13,14 @@ import type {
   ConfigInfo,
   DeviceList,
   ExportFields,
+  ForceRequestBody,
   LoginRequest,
   OauthApps,
   Overview,
+  PathMap,
+  PathMaps,
   RefreshResult,
+  SavePathMapsResult,
   SessionDetail,
   SessionLines,
   SessionLinesParams,
@@ -170,6 +174,45 @@ export function useConfig() {
     queryKey: ["config"],
     queryFn: ({ signal }) => apiGet<ConfigInfo>("/api/config", {}, signal),
     staleTime: 15_000,
+  });
+}
+
+export function usePathMaps() {
+  return useQuery({
+    queryKey: ["paths"],
+    queryFn: ({ signal }) => apiGet<PathMaps>("/api/paths", {}, signal),
+    staleTime: 10_000,
+  });
+}
+
+export function useSavePathMaps(): UseMutationResult<SavePathMapsResult, Error, PathMap[]> {
+  return useMutation({
+    mutationFn: (items: PathMap[]) => apiPost<SavePathMapsResult>("/api/paths", { items }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["paths"] });
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+  });
+}
+
+export function useForcePathMap(): UseMutationResult<SavePathMapsResult, Error, ForceRequestBody> {
+  return useMutation({
+    mutationFn: (body: ForceRequestBody) => apiPost<SavePathMapsResult>("/api/paths/force", body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["paths"] });
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+  });
+}
+
+export function useWithdrawForce(): UseMutationResult<SavePathMapsResult, Error, string> {
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiPost<SavePathMapsResult>(`/api/paths/force/${encodeURIComponent(id)}/withdraw`),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["paths"] });
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
   });
 }
 

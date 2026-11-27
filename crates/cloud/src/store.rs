@@ -1,10 +1,12 @@
 //! Everything the device side keeps in the database: numbered config revisions,
-//! the resources they point to, and what devices last reported.
+//! the resources they point to, what devices last reported, and the parts of
+//! the config edited in the panel.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 
+use crate::doc::PathMapDoc;
 use crate::signer::Signer;
 use crate::source::Distribution;
 use crate::{ConfigDoc, Result};
@@ -36,7 +38,39 @@ CREATE TABLE IF NOT EXISTS device_reports (
     client_version  TEXT    NOT NULL,
     report          TEXT    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS edited_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT    NOT NULL,
+    updated_ms  INTEGER NOT NULL
+);
 "#;
+
+const PATH_MAPS: &str = "paths.map";
+const PANEL_FORCE: &str = "force.paths";
+
+/// A force request made in the panel for one path rule a device locked.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PanelForce {
+    pub id: String,
+    pub device: String,
+    pub from: String,
+    /// Empty: the device drops its rule.
+    pub to: String,
+    pub created_ms: i64,
+}
+
+impl PanelForce {
+    pub fn to_doc(&self) -> crate::doc::ForceDoc {
+        crate::doc::ForceDoc {
+            id: self.id.clone(),
+            changes: vec![crate::doc::ChangeDoc {
+                key: crate::source::PATHS_KEY.to_string(),
+                value_json: serde_json::json!({ "from": self.from, "to": self.to }).to_string(),
+            }],
+            devices: vec![self.device.clone()],
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -105,6 +139,14 @@ pub struct Failure {
     pub reason: String,
 }
 
+/// A `[[paths.map]]` rule written on a device.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalPathMap {
+    pub from: String,
+    pub to: String,
+    pub locked: bool,
+}
+
 /// What a device last told us (docs/api.md, devices).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceState {
@@ -116,6 +158,9 @@ pub struct DeviceState {
     pub local_values: Vec<LocalValue>,
     pub requests: Vec<RequestState>,
     pub last_failure: Option<Failure>,
+    /// Reports from before devices sent these have none.
+    #[serde(default)]
+    pub paths: Vec<LocalPathMap>,
 }
 
 #[derive(Clone)]
@@ -294,6 +339,59 @@ impl Store {
         .bind(state.received_ms)
         .bind(&state.client_version)
         .bind(serde_json::to_string(state).expect("plain struct"))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The path maps edited in the panel, and when they were last saved.
+    pub async fn path_maps(&self) -> Result<(Vec<PathMapDoc>, Option<i64>)> {
+        let row = sqlx::query("SELECT value, updated_ms FROM edited_config WHERE key = ?")
+            .bind(PATH_MAPS)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(match row {
+            None => (Vec::new(), None),
+            Some(r) => (
+                serde_json::from_str(&r.get::<String, _>("value"))
+                    .map_err(|e| crate::Error::config(format!("stored path maps do not read: {e}")))?,
+                Some(r.get("updated_ms")),
+            ),
+        })
+    }
+
+    /// Replaces the whole table. Check it first (`check_path_maps`).
+    pub async fn set_path_maps(&self, maps: &[PathMapDoc], now_ms: i64) -> Result<()> {
+        self.put_edited(PATH_MAPS, serde_json::to_string(maps).expect("strings"), now_ms)
+            .await
+    }
+
+    /// Force requests made in the panel.
+    pub async fn panel_force(&self) -> Result<Vec<PanelForce>> {
+        let value: Option<String> = sqlx::query_scalar("SELECT value FROM edited_config WHERE key = ?")
+            .bind(PANEL_FORCE)
+            .fetch_optional(&self.pool)
+            .await?;
+        match value {
+            None => Ok(Vec::new()),
+            Some(text) => serde_json::from_str(&text)
+                .map_err(|e| crate::Error::config(format!("stored force requests do not read: {e}"))),
+        }
+    }
+
+    pub async fn set_panel_force(&self, force: &[PanelForce], now_ms: i64) -> Result<()> {
+        self.put_edited(PANEL_FORCE, serde_json::to_string(force).expect("strings"), now_ms)
+            .await
+    }
+
+    async fn put_edited(&self, key: &str, value: String, now_ms: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO edited_config (key, value, updated_ms) VALUES (?, ?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_ms = excluded.updated_ms",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(now_ms)
         .execute(&self.pool)
         .await?;
         Ok(())

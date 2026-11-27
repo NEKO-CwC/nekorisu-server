@@ -12,13 +12,14 @@ use tonic::transport::{Identity, Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 
 use crate::PROTOCOL;
+use crate::paths::{MAX_PATH_MAPS, MAX_PATH_TEXT};
 use crate::proto::cloud_server::{Cloud, CloudServer};
 use crate::proto::get_config_response::Result as ConfigResult;
 use crate::proto::{
     ConfigFailureReason, GetConfigRequest, GetConfigResponse, GetResourceRequest, NotModified, ReportStateRequest,
     ReportStateResponse, RequestState as ProtoRequestState, ResourceChunk, SignedConfig,
 };
-use crate::store::{DeviceState, Failure, LocalValue, RequestState, Store, View};
+use crate::store::{DeviceState, Failure, LocalPathMap, LocalValue, RequestState, Store, View};
 
 const CHUNK: usize = 256 * 1024;
 const MAX_VALUES: usize = 200;
@@ -237,6 +238,20 @@ impl Cloud for CloudService {
         if report.applied_etag.len() > MAX_ID {
             return bad("applied_etag is too long");
         }
+        if report.paths.len() > MAX_PATH_MAPS {
+            return bad("too many path maps");
+        }
+        let mut paths = Vec::new();
+        for p in &report.paths {
+            if p.from.is_empty() || p.from.len() > MAX_PATH_TEXT || p.to.len() > MAX_PATH_TEXT {
+                return bad("a path map has no `from` or is too long");
+            }
+            paths.push(LocalPathMap {
+                from: p.from.clone(),
+                to: p.to.clone(),
+                locked: p.locked,
+            });
+        }
         let mut local_values = Vec::new();
         for v in &report.local_values {
             if v.key.is_empty() || v.key.len() > MAX_KEY || v.value_json.len() > MAX_VALUE {
@@ -283,6 +298,7 @@ impl Cloud for CloudService {
             local_values,
             requests,
             last_failure,
+            paths,
         };
         self.store.upsert_report(&device, &state).await.map_err(internal)?;
         Ok(Response::new(ReportStateResponse {}))
