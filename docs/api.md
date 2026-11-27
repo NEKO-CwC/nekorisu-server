@@ -228,7 +228,7 @@
   "layout": { "found": true, "entries": ["devices", "logs", "sessions", "digests"] }
 }
 ```
-`address`、`username` 是电脑上 `nekorisu storage add` 要填的（和服务端读的是同一个），没设存储时是 `null`；密码不返回。`range_read` 是 `null` 表示还没测过；`false` 表示服务器不认 `Range`，按行读会退化成整份下载。
+`address`、`username` 是电脑上 `nekorisu storage add` 要填的，没设存储时是 `null`；密码不返回。`address` 是 `NEKORISU_DEVICE_WEBDAV_URL`（服务端经内部地址读存储时，电脑用的那个地址），没设就是服务端自己用的地址。`range_read` 是 `null` 表示还没测过；`false` 表示服务器不认 `Range`，按行读会退化成整份下载。
 
 ## 活动
 
@@ -300,7 +300,7 @@
 - `mcp.on` 为 `false` 时只有 `why`；`device.url` 是 `NEKORISU_DEVICE_URL`，没设就是 `NEKORISU_PUBLIC_URL`，都没设时 `device` 只有 `on: false` 和 `why`。`device.on` 还要求设了设备令牌。
 - `panel.ready` 是有没有设管理员密码，查不到是 `null`。
 - `storage.shown` 是 `NEKORISU_CONNECT_SHOW_STORAGE`：为 `true` 时 `address`、`username` 才有值。
-- `missing` 列出部署时漏掉的设置：管理员密码、`NEKORISU_PUBLIC_URL`、`NEKORISU_WEBDAV_URL`、`NEKORISU_DEVICE_TOKEN`。
+- `missing` 列出部署时漏掉的设置：管理员密码、`NEKORISU_PUBLIC_URL`（没设，或是 localhost）、`NEKORISU_WEBDAV_URL`、`NEKORISU_DEVICE_WEBDAV_URL`（服务端用的存储地址是集群里或本机的内部地址，又没给电脑另设一个）、`NEKORISU_DEVICE_TOKEN`。
 
 ## MCP
 

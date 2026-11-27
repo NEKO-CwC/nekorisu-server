@@ -678,7 +678,7 @@ pub async fn storage(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     let dav = s.settings.webdav.as_ref();
     Ok(Json(json!({
         "description": provider.describe(),
-        "address": dav.map(|d| d.url.clone()),
+        "address": dav.map(|d| d.for_devices().to_string()),
         "username": dav.and_then(|d| d.user.clone()),
         "ok": ok,
         "error": error,

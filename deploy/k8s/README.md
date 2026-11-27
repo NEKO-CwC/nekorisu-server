@@ -37,6 +37,7 @@ printf %s "<WebDAV 密码>" | kubectl -n nekorisu create secret generic nekorisu
 
 - `webdav-password`：存储的密码；用户名和地址在 `20-deployment.yaml` 里。`NEKORISU_WEBDAV_URL` 和客户端填同一个地址：归档在它下面的 `nekorisu/v1/`，所以填 `nekorisu/` 的上一层。
   OpenList / Alist 的 `/dav` 根是虚拟的，只能写在挂载的存储里：加一个挂载路径为 `/nekorisu` 的存储，地址填 `…/dav` 即可。
+  服务端用集群里的服务名读存储时（`http://openlist.<命名空间>.svc.cluster.local:5244/dav` 这类），在 `20-deployment.yaml` 里再设 `NEKORISU_DEVICE_WEBDAV_URL`，写电脑访问同一个文件夹用的地址；`setup_info` 和 panel 给电脑的就是它。
 - `device-token`：设备拉配置、上报时用。
 - MCP 没有令牌要配：Agent 用 OAuth 登录（第 5 步）。
 

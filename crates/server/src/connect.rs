@@ -101,6 +101,16 @@ pub async fn info(s: &Shared, with_storage: bool) -> Value {
             "设成存储的地址（nekorisu/ 的上一层），和各台电脑填同一个；再设 NEKORISU_WEBDAV_USER 和密码，然后重启。",
         ));
     }
+    if let Some(d) = dav
+        && d.device_url.is_none()
+        && crate::settings::internal_host(&d.url)
+    {
+        gaps.push(missing(
+            "NEKORISU_DEVICE_WEBDAV_URL",
+            "服务端读存储用的是内部地址（集群里或本机上的），别的电脑连不上它，setup_info 和 panel 给电脑的地址也就不对。",
+            "设成电脑访问同一个存储文件夹用的地址（nekorisu/ 的上一层），然后重启。",
+        ));
+    }
     if set.device_token.is_none() {
         gaps.push(missing(
             "NEKORISU_DEVICE_TOKEN",
@@ -159,7 +169,7 @@ pub async fn info(s: &Shared, with_storage: bool) -> Value {
         "configured": dav.is_some(),
         "kind": dav.map(|_| "webdav"),
         "shown": with_storage,
-        "address": if with_storage { dav.map(|d| d.url.clone()) } else { None },
+        "address": if with_storage { dav.map(|d| d.for_devices().to_string()) } else { None },
         "username": if with_storage { dav.and_then(|d| d.user.clone()) } else { None },
         "note": storage_note,
     });

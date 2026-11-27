@@ -17,6 +17,10 @@ services:
     environment:
       NEKORISU_WEBDAV_URL: https://dav.example.com/dav
       NEKORISU_WEBDAV_USER: me
+      # When the server reaches the storage by an address devices cannot use (a container
+      # name, localhost, a LAN IP), the address devices use for the same folder. Devices are
+      # shown this one (setup_info, the panel's storage page).
+      # NEKORISU_DEVICE_WEBDAV_URL: https://dav.example.com/dav
       NEKORISU_WEBDAV_PASSWORD_FILE: /run/secrets/webdav_password
       NEKORISU_DEVICE_TOKEN_FILE: /run/secrets/device_token
       # The address people and agents reach the panel and MCP at (with the port if it is not 443).

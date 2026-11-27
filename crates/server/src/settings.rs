@@ -12,6 +12,34 @@ pub struct WebDavSettings {
     pub url: String,
     pub user: Option<String>,
     pub password: Option<String>,
+    /// The address devices use for the same folder, when the server reaches
+    /// the storage another way (an address inside the cluster or on this
+    /// machine). Shown to devices instead of `url`.
+    pub device_url: Option<String>,
+}
+
+impl WebDavSettings {
+    /// What a device fills in with `nekorisu storage add`.
+    pub fn for_devices(&self) -> &str {
+        self.device_url.as_deref().unwrap_or(&self.url)
+    }
+}
+
+/// An address only this machine or its cluster can reach: localhost, a name
+/// without dots, a Kubernetes service name, a private or loopback IP.
+pub fn internal_host(url: &str) -> bool {
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    match url.host() {
+        Some(Host::Domain(d)) => {
+            let d = d.to_ascii_lowercase();
+            d == "localhost" || !d.contains('.') || d.ends_with(".svc") || d.contains(".svc.") || d.ends_with(".local")
+        }
+        Some(Host::Ipv4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        None => false,
+    }
 }
 
 #[derive(Clone)]
@@ -180,10 +208,24 @@ impl Settings {
                 if let Some(root) = var("NEKORISU_WEBDAV_ROOT") {
                     url = format!("{}/{}", url.trim_end_matches('/'), root.trim_matches('/'));
                 }
+                let device_url = match var("NEKORISU_DEVICE_WEBDAV_URL") {
+                    None => None,
+                    Some(u) => match Url::parse(u.trim()) {
+                        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") && parsed.password().is_none() => {
+                            Some(u.trim().trim_end_matches('/').to_string())
+                        }
+                        _ => {
+                            return Err(format!(
+                                "NEKORISU_DEVICE_WEBDAV_URL {u:?}: write the http(s) address devices use, without a password"
+                            ));
+                        }
+                    },
+                };
                 Some(WebDavSettings {
                     url,
                     user: var("NEKORISU_WEBDAV_USER"),
                     password: secret("NEKORISU_WEBDAV_PASSWORD")?,
+                    device_url,
                 })
             }
         };
@@ -318,6 +360,37 @@ mod tests {
         let dav = s.webdav.unwrap();
         assert_eq!(dav.url, "https://dav.example/files/backup");
         assert_eq!(dav.password.as_deref(), Some("p"));
+        assert_eq!(dav.for_devices(), "https://dav.example/files/backup");
+    }
+
+    #[test]
+    fn devices_can_get_their_own_storage_address() {
+        let s = settings(&[
+            (
+                "NEKORISU_WEBDAV_URL",
+                "http://openlist.storage.svc.cluster.local:5244/dav",
+            ),
+            ("NEKORISU_DEVICE_WEBDAV_URL", "https://dav.example.com/dav/"),
+        ])
+        .unwrap();
+        assert_eq!(s.webdav.unwrap().for_devices(), "https://dav.example.com/dav");
+        assert!(
+            settings(&[
+                ("NEKORISU_WEBDAV_URL", "https://dav.example/files"),
+                ("NEKORISU_DEVICE_WEBDAV_URL", "https://u:p@dav.example/files"),
+            ])
+            .is_err()
+        );
+        for (url, internal) in [
+            ("http://openlist.storage.svc.cluster.local:5244/dav", true),
+            ("http://openlist:5244/dav", true),
+            ("http://192.168.1.5/dav", true),
+            ("http://localhost:8080/dav", true),
+            ("https://dav.example.com/dav", false),
+            ("https://203.0.113.7/dav", false),
+        ] {
+            assert_eq!(internal_host(url), internal, "{url}");
+        }
     }
 
     #[test]
