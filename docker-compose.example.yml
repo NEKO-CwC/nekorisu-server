@@ -59,6 +59,12 @@ services:
 volumes:
   nekorisu-data:
 
+# Create the two files first, next to docker-compose.yml:
+#     mkdir -p secrets && chmod 700 secrets
+#     printf %s '<WebDAV password>' > secrets/webdav_password
+#     openssl rand -hex 32 > secrets/device_token
+# Every device that connects (nekorisu source login) asks for the device token, and the
+# panel never shows it: read it back with `cat secrets/device_token`.
 secrets:
   webdav_password:
     file: ./secrets/webdav_password

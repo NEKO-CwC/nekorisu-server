@@ -290,7 +290,7 @@
   "device": { "on": true, "url": "https://nekorisu.example.com", "protocol": "nekorisu.cloud.v1",
               "key_id": "0123456789abcdef", "public_key": "base64...",
               "commands": ["nekorisu source add home https://nekorisu.example.com --key base64...", "nekorisu source login"],
-              "token": "...", "client_min_version": "0.2.0" },
+              "token": "...", "token_where": ["...", "...", "..."], "undo": "...", "client_min_version": "0.2.0" },
   "storage": { "configured": true, "kind": "webdav", "shown": false, "address": null, "username": null, "note": "..." },
   "client": { "min_version": "0.2.0", "manual": "https://raw.githubusercontent.com/NEKO-CwC/nekorisu/main/docs/agent-install.md" },
   "missing": [ { "setting": "NEKORISU_DEVICE_TOKEN", "effect": "...", "fix": "..." } ],
@@ -298,6 +298,7 @@
 }
 ```
 - `mcp.on` 为 `false` 时只有 `why`；`device.url` 是 `NEKORISU_DEVICE_URL`，没设就是 `NEKORISU_PUBLIC_URL`，都没设时 `device` 只有 `on: false` 和 `why`。`device.on` 还要求设了设备令牌。
+- `device.token` 说明设备令牌是什么、先确认拿得到再运行 `source add`；`device.token_where` 是部署的人去哪取它（panel 上看不到它的值），按部署方式各一条；`device.undo` 是运行了 `source add` 又不接时怎么撤掉。
 - `panel.ready` 是有没有设管理员密码，查不到是 `null`。
 - `storage.shown` 是 `NEKORISU_CONNECT_SHOW_STORAGE`：为 `true` 时 `address`、`username` 才有值。
 - `missing` 列出部署时漏掉的设置：管理员密码、`NEKORISU_PUBLIC_URL`（没设，或是 localhost）、`NEKORISU_WEBDAV_URL`、`NEKORISU_DEVICE_WEBDAV_URL`（服务端用的存储地址是集群里或本机的内部地址，又没给电脑另设一个）、`NEKORISU_DEVICE_TOKEN`。

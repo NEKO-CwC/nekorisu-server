@@ -41,7 +41,7 @@ const GLOSSARY: [(&str, &str); 8] = [
     ),
     (
         "设备令牌",
-        "电脑向服务端取设置、上报状态时用的口令，部署时设的 NEKORISU_DEVICE_TOKEN；不是 panel 的管理员密码。",
+        "电脑向服务端取设置、上报状态时用的口令，部署时设的 NEKORISU_DEVICE_TOKEN；不是 panel 的管理员密码，panel 上也看不到它的值。",
     ),
     (
         "公钥",
@@ -51,6 +51,13 @@ const GLOSSARY: [(&str, &str); 8] = [
         "来源",
         "客户端对服务端的叫法：nekorisu source add 把这台服务端设成这台电脑的来源。",
     ),
+];
+
+/// Where whoever deployed the server finds the device token. The panel never shows it.
+const TOKEN_WHERE: [&str; 3] = [
+    "用 docker compose 部署的：`docker-compose.yml` 旁边的 `secrets/device_token` 文件（`cat secrets/device_token`）。",
+    "照服务端仓库的 deploy/k8s 说明部署的：在服务器上运行 `kubectl -n nekorisu get secret nekorisu-secrets -o jsonpath='{.data.device-token}' | base64 -d`（命名空间和 Secret 名按你的部署）。",
+    "别的部署方式：看部署时 `NEKORISU_DEVICE_TOKEN` 是怎么设的，或者 `NEKORISU_DEVICE_TOKEN_FILE` 指向哪个文件。",
 ];
 
 fn missing(setting: &str, effect: &str, fix: &str) -> Value {
@@ -115,7 +122,7 @@ pub async fn info(s: &Shared, with_storage: bool) -> Value {
         gaps.push(missing(
             "NEKORISU_DEVICE_TOKEN",
             "没设：电脑取不到服务端的设置，也不能上报。",
-            "设一个随机的长字符串（比如 openssl rand -hex 32 的输出），然后重启。",
+            "设一个随机的长字符串（比如 openssl rand -hex 32 的输出），然后重启。留一份：每台电脑接入时都要输入它。",
         ));
     }
 
@@ -150,7 +157,9 @@ pub async fn info(s: &Shared, with_storage: bool) -> Value {
                 format!("nekorisu source add home {url} --key {key}"),
                 "nekorisu source login".to_string(),
             ],
-            "token": "设备令牌在这台电脑的终端里输入（nekorisu source login），不要发给 Agent。",
+            "token": "设备令牌就是部署时设的 NEKORISU_DEVICE_TOKEN，不是 panel 的管理员密码，panel 上也看不到它的值。先确认拿得到它，再运行 nekorisu source add；令牌在这台电脑的终端里输入（nekorisu source login），不要发给 Agent。",
+            "token_where": TOKEN_WHERE,
+            "undo": "运行了 source add 又不接了：nekorisu source remove。旧版本没有这个命令，就删掉 ~/.nekorisu/source.json 和 ~/.nekorisu/remote/，再运行 nekorisu core stop、nekorisu core start。",
             "client_min_version": CLIENT_MIN_VERSION,
         }),
         None => json!({ "on": false, "url": null, "why": "没设 NEKORISU_PUBLIC_URL（或 NEKORISU_DEVICE_URL）" }),
@@ -296,12 +305,15 @@ fn blocks(i: &Value) -> Vec<Block> {
                 "现在还用不了：服务端没设 NEKORISU_DEVICE_TOKEN，先请部署的人补上。下面的命令补好以后照样能用。".into(),
             ));
         }
+        out.push(P(text(&i["device"]["token"])));
+        out.push(P("去哪取（请部署服务端的人在服务器上查）：".into()));
+        out.push(Items(lines(&i["device"]["token_where"])));
         out.push(P(format!(
-            "要客户端 {} 或更新的版本。在这台电脑上原样运行：",
+            "要客户端 {} 或更新的版本。拿得到令牌，就在这台电脑上原样运行：",
             text(&i["device"]["client_min_version"])
         )));
         out.push(Code(lines(&i["device"]["commands"])));
-        out.push(P(text(&i["device"]["token"])));
+        out.push(P(text(&i["device"]["undo"])));
     } else {
         out.push(P("现在还不能接：先请部署的人补上上面缺的设置。".into()));
     }

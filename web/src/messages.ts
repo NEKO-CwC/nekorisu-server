@@ -313,7 +313,8 @@ export const zhCN = {
     fileStatus: "配置文件状态",
     sourceOk: "没有错误。",
     deviceToken: "设备令牌",
-    tokenSet: "已设置（NEKORISU_DEVICE_TOKEN）",
+    tokenSet:
+      "已设置（NEKORISU_DEVICE_TOKEN）。这里不显示它的值：docker compose 部署的在 secrets/device_token 文件里，照 deploy/k8s 部署的用 kubectl 从 Secret 读回，见连接说明 /connect。",
     tokenNotSet: "没有设置：账号版配置和设备上报都不可用，请设置 NEKORISU_DEVICE_TOKEN 后重启。",
   },
   storage: {
